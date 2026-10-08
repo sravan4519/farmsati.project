@@ -103,12 +103,42 @@
       box-shadow: 0 20px 40px -10px rgba(6, 78, 59, 0.35);
     }
 
+    /* Plant Growth & AI Circuit Keyframe Animations */
+    @keyframes plant-grow {
+      0% { transform: scale(0.3) translateY(20px); opacity: 0; }
+      50% { transform: scale(1.08) translateY(-4px); opacity: 0.9; }
+      100% { transform: scale(1) translateY(0); opacity: 1; }
+    }
+    .animate-plant-grow {
+      animation: plant-grow 1.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes ai-circuit-expand {
+      0% { transform: scale(0.6); opacity: 0; }
+      50% { opacity: 0.6; }
+      100% { transform: scale(1.4); opacity: 0; }
+    }
+    .animate-ai-pulse-1 { animation: ai-circuit-expand 2.8s ease-out infinite; }
+    .animate-ai-pulse-2 { animation: ai-circuit-expand 2.8s ease-out 1.2s infinite; }
+
+    @keyframes particle-drift {
+      0%, 100% { transform: translateY(0px) translateX(0px); opacity: 0.4; }
+      50% { transform: translateY(-12px) translateX(6px); opacity: 0.8; }
+    }
+    .animate-particle-drift { animation: particle-drift 4s ease-in-out infinite; }
+
     /* Smooth luxury animations */
     @keyframes pulse-glow {
       0%, 100% { transform: scale(1); filter: drop-shadow(0 0 12px rgba(16, 185, 129, 0.45)); }
       50% { transform: scale(1.03); filter: drop-shadow(0 0 24px rgba(52, 211, 153, 0.8)); }
     }
     .animate-pulse-glow { animation: pulse-glow 3s infinite ease-in-out; }
+
+    @keyframes orbit {
+      from { transform: rotate(0deg) translateX(70px) rotate(0deg); }
+      to { transform: rotate(360deg) translateX(70px) rotate(-360deg); }
+    }
+    .animate-orbit { animation: orbit 6s linear infinite; }
 
     @keyframes subtle-float {
       0%, 100% { transform: translateY(0px); }
@@ -157,13 +187,13 @@
 
   <!-- Main App Shell -->
   <div id="app-shell" class="min-h-screen flex flex-col">
-    <!-- ONBOARDING OVERLAY CONTAINER -->
-    <div id="onboarding-container" class="fixed inset-0 z-50 bg-slate-950 flex items-center justify-center transition-opacity duration-500">
+    <!-- ONBOARDING OVERLAY CONTAINER (Cinematic dark-to-natural green intro with smooth transition) -->
+    <div id="onboarding-container" class="fixed inset-0 z-50 flex items-center justify-center transition-all duration-1000 ease-in-out">
       <!-- Steps rendered here dynamically -->
     </div>
 
     <!-- MAIN APP CONTENT (Desktop Sidebar + Mobile Bottom Nav + Main Dashboard Area) -->
-    <div id="main-content" class="flex-1 flex flex-col md:flex-row pb-20 md:pb-0 hidden">
+    <div id="main-content" class="flex-1 flex flex-col md:flex-row pb-20 md:pb-0">
       <!-- SIDEBAR (DESKTOP) -->
       <aside id="sidebar" class="hidden md:flex flex-col w-64 bg-white/95 backdrop-blur-xl border-r border-slate-200/80 p-5 shrink-0 justify-between shadow-xs">
         <div>
@@ -246,6 +276,12 @@
 
           <!-- Clean Executive Navbar: Location Switcher & Language Selector -->
           <div class="flex items-center space-x-2 sm:space-x-3">
+            <!-- Intro Replay Button -->
+            <button onclick="replayOnboarding()" class="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition active:scale-95 group" title="Replay Intro">
+              <i data-lucide="play-circle" class="w-3.5 h-3.5 text-white group-hover:scale-110 transition-transform"></i>
+              <span>🌱 <span class="hidden sm:inline">Intro</span></span>
+            </button>
+
             <!-- Active Location Pill Button -->
             <button onclick="openLocationModal()" class="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100/90 hover:bg-emerald-50 hover:text-emerald-900 text-slate-700 text-xs font-bold rounded-xl border border-slate-200/80 transition shadow-2xs group" title="Change Location / City">
               <i data-lucide="map-pin" class="w-3.5 h-3.5 text-emerald-600 group-hover:scale-110 transition-transform"></i>
@@ -911,7 +947,7 @@
       }
     }
 
-    // ONBOARDING & KEYNOTE INTRO ENGINE
+    // ONBOARDING & CINEMATIC INTRO ENGINE
     let onboardingStep = 1;
     let introAutoTimer = null;
 
@@ -919,18 +955,19 @@
       const container = document.getElementById('onboarding-container');
       const mainContent = document.getElementById('main-content');
 
+      // Initialize main application underneath
+      initMainApp();
+
       const alreadyShownThisSession = sessionStorage.getItem('farmsathi_intro_shown') === 'true';
 
       if (STATE.onboarded && alreadyShownThisSession && !forceIntro) {
         container.classList.add('hidden');
-        mainContent.classList.remove('hidden');
-        initMainApp();
         return;
       }
 
       sessionStorage.setItem('farmsathi_intro_shown', 'true');
-      container.classList.remove('hidden');
-      mainContent.classList.add('hidden');
+      container.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
+      container.style.opacity = '1';
       onboardingStep = 1;
       renderOnboardingStep();
     }
@@ -944,20 +981,24 @@
         clearTimeout(introAutoTimer);
         introAutoTimer = null;
       }
-      if (STATE.onboarded) {
-        const container = document.getElementById('onboarding-container');
-        const mainContent = document.getElementById('main-content');
-        container.classList.add('hidden');
-        mainContent.classList.remove('hidden');
-        initMainApp();
-        refreshWeather();
-        if (typeof confetti === 'function') {
-          try {
-            confetti({ particleCount: 50, spread: 70, origin: { y: 0.6 } });
-          } catch (e) {}
-        }
-      } else {
+      
+      const container = document.getElementById('onboarding-container');
+      if (container) {
+        // Ultra-smooth cinematic fade out revealing the FarmSathi website
+        container.style.transition = 'opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1), transform 0.9s cubic-bezier(0.16, 1, 0.3, 1)';
+        container.style.opacity = '0';
+        container.style.transform = 'scale(1.03)';
+        container.classList.add('pointer-events-none');
+        setTimeout(() => {
+          container.classList.add('hidden');
+          container.style.transform = '';
+        }, 900);
+      }
+
+      if (!STATE.onboarded) {
         skipToStep(2);
+      } else {
+        refreshWeather();
       }
     }
 
@@ -965,93 +1006,78 @@
       const container = document.getElementById('onboarding-container');
       
       if (onboardingStep === 1) {
-        // STEP 1: Ultra-Premium Agritech Welcome & Initialization Screen
+        // STEP 1: Premium, modern website intro animation
+        // Dark-to-natural green background, glowing particles, growing leaf/plant animation, AI lines, logo reveal, tagline: "Healthier Plants. Smarter Care."
         container.innerHTML = `
-          <div class="relative w-full h-full min-h-screen flex flex-col items-center justify-center p-6 text-center select-none overflow-y-auto bg-[#0a0f0d] text-white">
-            <!-- Subtle Radial Vignette Background -->
-            <div class="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_-10%,rgba(16,185,129,0.18),rgba(10,15,13,0))] pointer-events-none"></div>
-            <div class="absolute inset-0 bg-[radial-gradient(circle_at_bottom_right,rgba(20,184,166,0.12),rgba(10,15,13,0))] pointer-events-none"></div>
+          <div class="relative w-full h-full min-h-screen flex flex-col items-center justify-center p-6 text-center select-none overflow-hidden bg-gradient-to-b from-[#05130b] via-[#092617] to-[#041209] text-white">
+            
+            <!-- Soft Agricultural Ambient Lighting & Organic Vignette -->
+            <div class="absolute w-[600px] h-[600px] rounded-full bg-emerald-500/15 blur-[140px] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none"></div>
+            <div class="absolute w-[450px] h-[450px] rounded-full bg-teal-400/10 blur-[120px] -top-24 -left-24 pointer-events-none"></div>
+            <div class="absolute w-[500px] h-[500px] rounded-full bg-forest-600/10 blur-[130px] -bottom-24 -right-24 pointer-events-none"></div>
 
-            <!-- Main Luxury Glass Card -->
-            <div class="relative z-10 w-full max-w-lg p-8 sm:p-10 rounded-3xl bg-slate-900/80 backdrop-blur-2xl border border-white/10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.7)] premium-glow-card flex flex-col items-center animate-in fade-in zoom-in-95 duration-500">
+            <!-- Subtle Floating Glowing Agricultural Particles -->
+            <div class="absolute inset-0 pointer-events-none overflow-hidden">
+              <div class="absolute top-1/4 left-1/5 w-1.5 h-1.5 rounded-full bg-emerald-300 shadow-[0_0_12px_#34d1bf] animate-particle-drift"></div>
+              <div class="absolute top-3/5 left-1/4 w-2 h-2 rounded-full bg-teal-200 shadow-[0_0_14px_#2dd4bf] animate-particle-drift" style="animation-delay: 1.5s;"></div>
+              <div class="absolute top-1/3 right-1/4 w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_#10b981] animate-particle-drift" style="animation-delay: 2.2s;"></div>
+              <div class="absolute bottom-1/4 right-1/5 w-2 h-2 rounded-full bg-amber-200/80 shadow-[0_0_12px_#fde047] animate-particle-drift" style="animation-delay: 0.8s;"></div>
+            </div>
+
+            <!-- Central Growing Plant & AI Circuit Ring Composition -->
+            <div class="relative my-6 flex items-center justify-center">
               
-              <!-- Refined Minimal Brand Icon -->
-              <div class="mb-6 relative">
-                <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-gradient-to-br from-emerald-500 via-emerald-600 to-teal-700 flex items-center justify-center shadow-lg shadow-emerald-950/60 border border-emerald-400/30 animate-subtle-float">
-                  <i data-lucide="sprout" class="w-10 h-10 sm:w-12 sm:h-12 text-white"></i>
-                </div>
-                <div class="absolute -bottom-2 -right-2 px-2 py-0.5 rounded-md bg-emerald-400 text-slate-950 text-[10px] font-black tracking-wider uppercase shadow-xs">
-                  AI PRO
-                </div>
-              </div>
+              <!-- AI Glowing Circuit Pulse Rings (represents AI, weather & smart plant monitoring) -->
+              <div class="absolute w-44 h-44 sm:w-52 sm:h-52 rounded-full border border-emerald-400/30 animate-ai-pulse-1 pointer-events-none"></div>
+              <div class="absolute w-44 h-44 sm:w-52 sm:h-52 rounded-full border border-teal-300/25 animate-ai-pulse-2 pointer-events-none"></div>
 
-              <!-- Brand Name & Tagline -->
-              <div class="space-y-2 mb-6">
-                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-white flex items-center justify-center space-x-2">
-                  <span>FarmSathi</span>
-                </h1>
-                <p class="text-sm sm:text-base font-semibold text-emerald-300">
-                  Precision Agronomy & Smart Urban Farming Intelligence
-                </p>
-                <p class="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
-                  ${loc('భారతీయ రైతులు మరియు అర్బన్ గార్డెనర్ల కోసం అధునాతన AI అసిస్టెంట్', 'भारतीय किसानों और शहरी बागवानों के लिए उन्नत AI सहायक', 'Empowering smallholder & urban growers with local microclimate analytics and AI plant diagnostics.')}
-                </p>
-              </div>
-
-              <!-- Core Platform Pillars (Clean, elegant 3-column pill strip) -->
-              <div class="w-full grid grid-cols-3 gap-2.5 py-4 border-y border-white/10 text-center mb-6">
-                <div class="p-2.5 rounded-xl bg-white/5 border border-white/5">
-                  <div class="text-[10px] text-emerald-300 font-bold uppercase tracking-wider mb-0.5">Satellite</div>
-                  <div class="text-xs font-semibold text-slate-200">Open-Meteo</div>
-                </div>
-                <div class="p-2.5 rounded-xl bg-white/5 border border-white/5">
-                  <div class="text-[10px] text-teal-300 font-bold uppercase tracking-wider mb-0.5">Doctor</div>
-                  <div class="text-xs font-semibold text-slate-200">AI Diagnosis</div>
-                </div>
-                <div class="p-2.5 rounded-xl bg-white/5 border border-white/5">
-                  <div class="text-[10px] text-amber-300 font-bold uppercase tracking-wider mb-0.5">Offline</div>
-                  <div class="text-xs font-semibold text-slate-200">100% PWA</div>
-                </div>
-              </div>
-
-              <!-- Progress bar & Action Launchers -->
-              <div class="w-full space-y-4">
-                <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                  <div id="intro-progress-bar" class="bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-400 h-full w-0 transition-all duration-[3000ms] ease-out"></div>
-                </div>
-
-                <button onclick="enterCommandCenter()" class="w-full py-3.5 px-6 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-emerald-950/40 transition-all duration-200 flex items-center justify-center space-x-2 active:scale-98 group">
-                  <span>${loc('ప్రారంభించండి', 'शुरू करें', 'Enter Dashboard')}</span>
-                  <i data-lucide="arrow-right" class="w-4 h-4 group-hover:translate-x-1 transition-transform"></i>
-                </button>
-
-                <div class="flex items-center justify-between text-xs text-slate-400 pt-1">
-                  <button onclick="skipToStep(2)" class="hover:text-emerald-300 transition">
-                    🌐 ${loc('భాష / నగరం మార్చు', 'भाषा / शहर बदलें', 'Language & City Setup')}
-                  </button>
-                  <button onclick="enterCommandCenter()" class="hover:text-emerald-300 transition">
-                    ${t('skipIntro')} &rarr;
-                  </button>
+              <!-- Outer Subtle Holographic Glow Disc -->
+              <div class="w-32 h-32 sm:w-40 sm:h-40 rounded-full border border-emerald-400/35 bg-emerald-950/40 backdrop-blur-xl flex items-center justify-center shadow-[0_0_50px_rgba(16,185,129,0.3)] animate-pulse-glow">
+                
+                <!-- Inner Brand Growth Core with Sprout Animation -->
+                <div class="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl bg-gradient-to-tr from-emerald-800 via-emerald-600 to-teal-500 flex items-center justify-center shadow-2xl shadow-emerald-500/50 border border-emerald-300/40">
+                  <div class="animate-plant-grow flex items-center justify-center">
+                    <i data-lucide="sprout" class="w-12 h-12 sm:w-14 sm:h-14 text-white drop-shadow-[0_4px_16px_rgba(0,0,0,0.5)]"></i>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <!-- Clean subtle footer credit -->
-            <div class="relative z-10 mt-6 text-xs text-slate-400 font-medium tracking-wide">
-              FarmSathi Intelligent Agriculture Platform &bull; Offline Capable
+            <!-- Brand Logo & Clean Futuristic Reveal -->
+            <div class="relative z-10 space-y-3 max-w-md mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700">
+              <h1 class="text-4xl sm:text-6xl font-black tracking-tight text-white flex items-center justify-center space-x-2">
+                <span class="bg-gradient-to-r from-white via-emerald-100 to-teal-200 bg-clip-text text-transparent">FarmSathi</span>
+              </h1>
+              
+              <!-- Clean Official Tagline -->
+              <p class="text-sm sm:text-base font-semibold text-emerald-300 tracking-wide">
+                Healthier Plants. Smarter Care.
+              </p>
             </div>
+
+            <!-- Subtle Progress Line Indicator -->
+            <div class="mt-8 w-44 sm:w-56 h-1 rounded-full bg-white/10 overflow-hidden">
+              <div id="intro-progress-line" class="h-full bg-gradient-to-r from-emerald-400 to-teal-300 w-0 transition-all duration-[3200ms] ease-out"></div>
+            </div>
+
+            <!-- Gentle skip fallback -->
+            <button onclick="enterCommandCenter()" class="mt-4 text-xs text-slate-400 hover:text-emerald-300 transition-colors py-1 px-3">
+              ${t('skipIntro')} &rarr;
+            </button>
           </div>
         `;
         lucide.createIcons();
-        setTimeout(() => {
-          const bar = document.getElementById('intro-progress-bar');
-          if (bar) bar.style.width = '100%';
-        }, 50);
 
-        // Auto advance after 3.2s
+        // Animate the subtle progress line
+        setTimeout(() => {
+          const line = document.getElementById('intro-progress-line');
+          if (line) line.style.width = '100%';
+        }, 60);
+
+        // After 3.4 seconds, smoothly transition into the main FarmSathi website
         introAutoTimer = setTimeout(() => {
           if (onboardingStep === 1) enterCommandCenter();
-        }, 3200);
+        }, 3400);
 
       } else if (onboardingStep === 2) {
         // STEP 2: Language Selection (English, Hindi, Telugu only)
@@ -3362,7 +3388,7 @@
                   </div>
                   <div class="inline-flex items-center space-x-1.5 px-3 py-1 bg-white/10 backdrop-blur-md rounded-full text-xs font-bold text-teal-200 border border-white/10">
                     <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i>
-                    <span>98.4% AI Accuracy</span>
+                    <span>Gemini 2.5 Agronomy Model</span>
                   </div>
                 </div>
 
