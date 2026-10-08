@@ -110,6 +110,18 @@
     }
     .animate-pulse-glow { animation: pulse-glow 3s infinite ease-in-out; }
 
+    @keyframes subtle-float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-4px); }
+    }
+    .animate-subtle-float { animation: subtle-float 4s ease-in-out infinite; }
+
+    @keyframes premium-glow-ring {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25), 0 10px 30px -5px rgba(5, 150, 105, 0.2); }
+      50% { box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.45), 0 20px 45px -5px rgba(5, 150, 105, 0.35); }
+    }
+    .premium-glow-card { animation: premium-glow-ring 4s ease-in-out infinite; }
+
     @keyframes scan {
       0% { top: 0%; opacity: 0.8; }
       50% { top: 92%; opacity: 1; }
@@ -234,12 +246,6 @@
 
           <!-- Clean Executive Navbar: Location Switcher & Language Selector -->
           <div class="flex items-center space-x-2 sm:space-x-3">
-            <!-- Pitch Intro Replay Button for Judges -->
-            <button onclick="replayOnboarding()" class="flex items-center space-x-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-black rounded-xl shadow-xs transition active:scale-95 group" title="Replay FarmSathi Intro Presentation for Judges">
-              <i data-lucide="play-circle" class="w-3.5 h-3.5 text-white group-hover:scale-110 transition-transform"></i>
-              <span>🎬 <span class="hidden sm:inline">Pitch</span> Intro</span>
-            </button>
-
             <!-- Active Location Pill Button -->
             <button onclick="openLocationModal()" class="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100/90 hover:bg-emerald-50 hover:text-emerald-900 text-slate-700 text-xs font-bold rounded-xl border border-slate-200/80 transition shadow-2xs group" title="Change Location / City">
               <i data-lucide="map-pin" class="w-3.5 h-3.5 text-emerald-600 group-hover:scale-110 transition-transform"></i>
@@ -720,10 +726,10 @@
             <!-- 5. Replay Intro -->
             <button onclick="closeModal(); replayOnboarding();" class="w-full p-3.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-2xl transition text-left flex items-center justify-between">
               <div>
-                <div class="text-xs font-bold text-slate-900">✨ Replay Startup Intro Animation</div>
-                <div class="text-[11px] text-slate-500">Watch the 3-4s logo orbit & language/location setup sequence.</div>
+                <div class="text-xs font-bold text-slate-900">✨ View Welcome Screen</div>
+                <div class="text-[11px] text-slate-500">Access FarmSathi initialization, language, and setup walkthrough.</div>
               </div>
-              <span class="text-xs font-bold px-2 py-1 bg-slate-200 text-slate-700 rounded-lg">Play</span>
+              <span class="text-xs font-bold px-2 py-1 bg-slate-200 text-slate-700 rounded-lg">Open</span>
             </button>
           </div>
         </div>
@@ -959,84 +965,80 @@
       const container = document.getElementById('onboarding-container');
       
       if (onboardingStep === 1) {
-        // STEP 1: Executive Keynote Startup Presentation
+        // STEP 1: Ultra-Premium Agritech Welcome & Initialization Screen
         container.innerHTML = `
-          <div class="relative w-full h-full min-h-screen flex flex-col items-center justify-center p-6 text-center select-none overflow-y-auto bg-gradient-to-b from-slate-950 via-emerald-950 to-slate-950 text-white">
-            <!-- Ambient particle glows -->
-            <div class="absolute w-[500px] h-[500px] rounded-full bg-emerald-500/20 blur-[130px] -top-32 -left-32 pointer-events-none"></div>
-            <div class="absolute w-[450px] h-[450px] rounded-full bg-teal-400/20 blur-[110px] -bottom-32 -right-32 pointer-events-none"></div>
-            <div class="absolute w-80 h-80 rounded-full bg-amber-400/10 blur-[90px] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none"></div>
+          <div class="relative w-full h-full min-h-screen flex flex-col items-center justify-center p-6 text-center select-none overflow-y-auto bg-[#0a0f0d] text-white">
+            <!-- Subtle Radial Vignette Background -->
+            <div class="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_-10%,rgba(16,185,129,0.18),rgba(10,15,13,0))] pointer-events-none"></div>
+            <div class="absolute inset-0 bg-[radial-gradient(circle_at_bottom_right,rgba(20,184,166,0.12),rgba(10,15,13,0))] pointer-events-none"></div>
 
-            <!-- Keynote Presentation Ribbon -->
-            <div class="relative z-10 mb-4 inline-flex items-center space-x-2 px-4 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-xs font-black tracking-wide shadow-lg backdrop-blur-md animate-in fade-in slide-in-from-top-4 duration-500">
-              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-              <span class="uppercase">🏆 AGRITECH HACKATHON INNOVATION SPOTLIGHT</span>
-            </div>
+            <!-- Main Luxury Glass Card -->
+            <div class="relative z-10 w-full max-w-lg p-8 sm:p-10 rounded-3xl bg-slate-900/80 backdrop-blur-2xl border border-white/10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.7)] premium-glow-card flex flex-col items-center animate-in fade-in zoom-in-95 duration-500">
+              
+              <!-- Refined Minimal Brand Icon -->
+              <div class="mb-6 relative">
+                <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-gradient-to-br from-emerald-500 via-emerald-600 to-teal-700 flex items-center justify-center shadow-lg shadow-emerald-950/60 border border-emerald-400/30 animate-subtle-float">
+                  <i data-lucide="sprout" class="w-10 h-10 sm:w-12 sm:h-12 text-white"></i>
+                </div>
+                <div class="absolute -bottom-2 -right-2 px-2 py-0.5 rounded-md bg-emerald-400 text-slate-950 text-[10px] font-black tracking-wider uppercase shadow-xs">
+                  AI PRO
+                </div>
+              </div>
 
-            <!-- Central Holographic Emblem with Double Orbit & Pulse Glow -->
-            <div class="relative my-4 flex items-center justify-center animate-in zoom-in-75 duration-700">
-              <!-- Double Orbiting Particles -->
-              <div class="absolute w-3.5 h-3.5 rounded-full bg-emerald-300 shadow-[0_0_20px_#34d1bf] animate-orbit"></div>
-              <div class="absolute w-2.5 h-2.5 rounded-full bg-amber-300 shadow-[0_0_15px_#f59e0b] animate-orbit" style="animation-duration: 4s; animation-direction: reverse;"></div>
+              <!-- Brand Name & Tagline -->
+              <div class="space-y-2 mb-6">
+                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-white flex items-center justify-center space-x-2">
+                  <span>FarmSathi</span>
+                </h1>
+                <p class="text-sm sm:text-base font-semibold text-emerald-300">
+                  Precision Agronomy & Smart Urban Farming Intelligence
+                </p>
+                <p class="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+                  ${loc('భారతీయ రైతులు మరియు అర్బన్ గార్డెనర్ల కోసం అధునాతన AI అసిస్టెంట్', 'भारतीय किसानों और शहरी बागवानों के लिए उन्नत AI सहायक', 'Empowering smallholder & urban growers with local microclimate analytics and AI plant diagnostics.')}
+                </p>
+              </div>
 
-              <!-- Outer Glow Ring -->
-              <div class="w-36 h-36 sm:w-44 sm:h-44 rounded-full border border-emerald-400/30 flex items-center justify-center animate-pulse-glow bg-emerald-950/40 backdrop-blur-xl">
-                <!-- Inner Holographic Disc -->
-                <div class="w-28 h-28 sm:w-32 sm:h-32 rounded-3xl bg-gradient-to-tr from-emerald-800 via-teal-700 to-emerald-500 flex items-center justify-center shadow-2xl shadow-emerald-500/50 border border-emerald-300/40">
-                  <i data-lucide="sprout" class="w-14 h-14 sm:w-16 sm:h-16 text-white drop-shadow-lg"></i>
+              <!-- Core Platform Pillars (Clean, elegant 3-column pill strip) -->
+              <div class="w-full grid grid-cols-3 gap-2.5 py-4 border-y border-white/10 text-center mb-6">
+                <div class="p-2.5 rounded-xl bg-white/5 border border-white/5">
+                  <div class="text-[10px] text-emerald-300 font-bold uppercase tracking-wider mb-0.5">Satellite</div>
+                  <div class="text-xs font-semibold text-slate-200">Open-Meteo</div>
+                </div>
+                <div class="p-2.5 rounded-xl bg-white/5 border border-white/5">
+                  <div class="text-[10px] text-teal-300 font-bold uppercase tracking-wider mb-0.5">Doctor</div>
+                  <div class="text-xs font-semibold text-slate-200">AI Diagnosis</div>
+                </div>
+                <div class="p-2.5 rounded-xl bg-white/5 border border-white/5">
+                  <div class="text-[10px] text-amber-300 font-bold uppercase tracking-wider mb-0.5">Offline</div>
+                  <div class="text-xs font-semibold text-slate-200">100% PWA</div>
+                </div>
+              </div>
+
+              <!-- Progress bar & Action Launchers -->
+              <div class="w-full space-y-4">
+                <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                  <div id="intro-progress-bar" class="bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-400 h-full w-0 transition-all duration-[3000ms] ease-out"></div>
+                </div>
+
+                <button onclick="enterCommandCenter()" class="w-full py-3.5 px-6 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-emerald-950/40 transition-all duration-200 flex items-center justify-center space-x-2 active:scale-98 group">
+                  <span>${loc('ప్రారంభించండి', 'शुरू करें', 'Enter Dashboard')}</span>
+                  <i data-lucide="arrow-right" class="w-4 h-4 group-hover:translate-x-1 transition-transform"></i>
+                </button>
+
+                <div class="flex items-center justify-between text-xs text-slate-400 pt-1">
+                  <button onclick="skipToStep(2)" class="hover:text-emerald-300 transition">
+                    🌐 ${loc('భాష / నగరం మార్చు', 'भाषा / शहर बदलें', 'Language & City Setup')}
+                  </button>
+                  <button onclick="enterCommandCenter()" class="hover:text-emerald-300 transition">
+                    ${t('skipIntro')} &rarr;
+                  </button>
                 </div>
               </div>
             </div>
 
-            <!-- App Title & Multilingual Subtitle -->
-            <div class="space-y-2 max-w-lg z-10">
-              <h1 class="text-4xl sm:text-6xl font-black tracking-tight text-white flex items-center justify-center space-x-2">
-                <span class="bg-gradient-to-r from-white via-emerald-100 to-teal-200 bg-clip-text text-transparent">FarmSathi</span>
-                <span class="text-xs px-2.5 py-1 font-black bg-emerald-400 text-slate-950 rounded-lg shadow-md">PRO AI</span>
-              </h1>
-              <p class="text-lg sm:text-xl font-bold text-emerald-300 leading-snug">“రైతు సేవలో ఆర్టిఫిషియల్ ఇంటెలిజెన్స్ • స్వయం సమృద్ధి భారతం”</p>
-              <p class="text-xs sm:text-sm text-slate-300 font-medium">Precision AI Agronomist for Smallholder & Urban Farmers</p>
-            </div>
-
-            <!-- Live System Diagnostics Telemetry Matrix -->
-            <div class="relative z-10 mt-6 grid grid-cols-2 gap-2.5 max-w-md w-full text-left text-xs font-semibold">
-              <div class="p-2.5 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md flex items-center space-x-2 text-emerald-200">
-                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span class="truncate">🛰️ Open-Meteo Satellite: LIVE</span>
-              </div>
-              <div class="p-2.5 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md flex items-center space-x-2 text-teal-200">
-                <span class="w-2 h-2 rounded-full bg-teal-400 animate-pulse"></span>
-                <span class="truncate">🔬 AI Plant Doctor: 98.4% Acc.</span>
-              </div>
-              <div class="p-2.5 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md flex items-center space-x-2 text-amber-200">
-                <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                <span class="truncate">🎙️ Trilingual Voice AI: READY</span>
-              </div>
-              <div class="p-2.5 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md flex items-center space-x-2 text-cyan-200">
-                <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-                <span class="truncate">📱 100% Offline PWA: READY</span>
-              </div>
-            </div>
-
-            <!-- Progress bar & Action Launchers -->
-            <div class="mt-7 w-full max-w-sm flex flex-col items-center space-y-3.5 z-10">
-              <div class="w-full bg-slate-800/80 rounded-full h-2 overflow-hidden border border-white/10">
-                <div id="intro-progress-bar" class="bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-500 h-full w-0 transition-all duration-[3000ms] ease-out"></div>
-              </div>
-              
-              <button onclick="enterCommandCenter()" class="w-full py-3.5 px-6 bg-gradient-to-r from-emerald-400 via-teal-400 to-emerald-300 hover:from-emerald-300 hover:to-teal-300 text-slate-950 rounded-2xl font-black text-sm shadow-xl shadow-emerald-900/50 transition-all duration-200 flex items-center justify-center space-x-2 active:scale-95 group">
-                <span>🚀 ${loc('కమాండ్ సెంటర్‌ను ప్రారంభించండి', 'कमांड सेंटर खोलें', 'Launch Command Center')}</span>
-                <i data-lucide="arrow-right" class="w-4 h-4 group-hover:translate-x-1 transition-transform"></i>
-              </button>
-
-              <div class="flex items-center justify-between w-full text-xs text-slate-400 pt-1">
-                <button onclick="skipToStep(2)" class="hover:text-emerald-300 transition">
-                  🌐 ${loc('భాష మార్చు', 'भाषा बदलें', 'Change Language / City')}
-                </button>
-                <button onclick="enterCommandCenter()" class="hover:text-emerald-300 transition">
-                  ${t('skipIntro')} &rarr;
-                </button>
-              </div>
+            <!-- Clean subtle footer credit -->
+            <div class="relative z-10 mt-6 text-xs text-slate-400 font-medium tracking-wide">
+              FarmSathi Intelligent Agriculture Platform &bull; Offline Capable
             </div>
           </div>
         `;
@@ -1046,10 +1048,10 @@
           if (bar) bar.style.width = '100%';
         }, 50);
 
-        // Auto advance after 3.8s
+        // Auto advance after 3.2s
         introAutoTimer = setTimeout(() => {
           if (onboardingStep === 1) enterCommandCenter();
-        }, 3800);
+        }, 3200);
 
       } else if (onboardingStep === 2) {
         // STEP 2: Language Selection (English, Hindi, Telugu only)
@@ -1534,16 +1536,7 @@
               ${isActive ? `<span class="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-300"></span>` : ''}
             </button>
           `;
-        }).join('') + `
-          <div class="pt-2 mt-2 border-t border-slate-100">
-            <button onclick="replayOnboarding()" 
-              class="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 transition-all duration-200 shadow-2xs group"
-              title="Show FarmSathi Pitch Intro to Judges">
-              <i data-lucide="play-circle" class="w-4 h-4 text-emerald-700 group-hover:scale-110 transition-transform"></i>
-              <span>🎬 ${loc('పిచ్ ఇంట్రో రీప్లే', 'पिच इंट्रो देखें', 'Replay Pitch Intro')}</span>
-            </button>
-          </div>
-        `;
+        }).join('');
       }
 
       // Render Mobile Navigation (top 5 primary tabs)
@@ -3400,11 +3393,7 @@
                   <i data-lucide="mic" class="w-4 h-4 text-slate-950 group-hover:scale-110 transition-transform"></i>
                   <span class="tracking-tight">${loc('🎙️ వాయిస్ AI అసిస్టెంట్', '🎙️ वॉयस AI सहायक', '🎙️ Voice AI Assistant')}</span>
                 </button>
-                <button onclick="replayOnboarding()" class="w-full py-2.5 px-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs rounded-2xl border border-emerald-400/30 backdrop-blur-md shadow-md transition flex items-center justify-center space-x-2 active:scale-95 group" title="Replay FarmSathi Pitch Intro for Judges">
-                  <i data-lucide="play-circle" class="w-4 h-4 text-emerald-200 group-hover:scale-110 transition-transform"></i>
-                  <span>${loc('🎬 జడ్జి ప్రెజెంటేషన్ ఇంట్రో', '🎬 जज प्रेजेंटेशन इंट्रो', '🎬 Replay Pitch Intro')}</span>
-                </button>
-                <button onclick="openAddPlantModal()" class="w-full py-2.5 px-4 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-2xl border border-white/20 backdrop-blur-md transition flex items-center justify-center space-x-2 active:scale-95">
+                <button onclick="openAddPlantModal()" class="w-full py-3 px-4 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-2xl border border-white/20 backdrop-blur-md transition flex items-center justify-center space-x-2 active:scale-95">
                   <i data-lucide="plus" class="w-4 h-4 text-emerald-300"></i>
                   <span>${loc('+ కొత్త పంట / మొక్క', '+ नई फसल / पौधा', '+ Add Crop / Plant')}</span>
                 </button>
