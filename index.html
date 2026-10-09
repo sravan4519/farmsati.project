@@ -958,52 +958,54 @@
       // Initialize main application underneath
       initMainApp();
 
-      const alreadyShownThisSession = sessionStorage.getItem('farmsathi_intro_shown') === 'true';
+      // Check if user has already calibrated GPS and finished onboarding in this session
+      const alreadyOnboardedSession = sessionStorage.getItem('farmsathi_session_onboarded') === 'true';
+      const gpsCalibrated = localStorage.getItem('farmsathi_gps_calibrated') === 'true';
 
-      if (STATE.onboarded && alreadyShownThisSession && !forceIntro) {
-        container.classList.add('hidden');
+      if (gpsCalibrated && alreadyOnboardedSession && !forceIntro) {
+        if (container) container.classList.add('hidden');
         return;
       }
 
-      sessionStorage.setItem('farmsathi_intro_shown', 'true');
-      container.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
-      container.style.opacity = '1';
+      if (container) {
+        container.classList.remove('hidden', 'opacity-0', 'pointer-events-none');
+        container.style.opacity = '1';
+        container.style.transform = 'scale(1)';
+      }
       onboardingStep = 1;
       renderOnboardingStep();
     }
 
     function replayOnboarding() {
-      initOnboarding(true);
-    }
-
-    function enterCommandCenter() {
       if (introAutoTimer) {
         clearTimeout(introAutoTimer);
         introAutoTimer = null;
       }
-      
-      const container = document.getElementById('onboarding-container');
-      if (container) {
-        // Ultra-smooth cinematic fade out revealing the FarmSathi website
-        container.style.transition = 'opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1), transform 0.9s cubic-bezier(0.16, 1, 0.3, 1)';
-        container.style.opacity = '0';
-        container.style.transform = 'scale(1.03)';
-        container.classList.add('pointer-events-none');
-        setTimeout(() => {
-          container.classList.add('hidden');
-          container.style.transform = '';
-        }, 900);
-      }
+      initOnboarding(true);
+    }
 
-      if (!STATE.onboarded) {
-        skipToStep(2);
-      } else {
-        refreshWeather();
+    function advanceToIntroStep(step) {
+      if (introAutoTimer) {
+        clearTimeout(introAutoTimer);
+        introAutoTimer = null;
       }
+      onboardingStep = step;
+      renderOnboardingStep();
+    }
+
+    function skipToStep(step) {
+      advanceToIntroStep(step);
+    }
+
+    function selectLanguage(langCode) {
+      STATE.lang = langCode;
+      saveState();
+      renderOnboardingStep();
     }
 
     function renderOnboardingStep() {
       const container = document.getElementById('onboarding-container');
+      if (!container) return;
       
       if (onboardingStep === 1) {
         // STEP 1: Premium, modern website intro animation
@@ -1060,9 +1062,10 @@
               <div id="intro-progress-line" class="h-full bg-gradient-to-r from-emerald-400 to-teal-300 w-0 transition-all duration-[3200ms] ease-out"></div>
             </div>
 
-            <!-- Gentle skip fallback -->
-            <button onclick="enterCommandCenter()" class="mt-4 text-xs text-slate-400 hover:text-emerald-300 transition-colors py-1 px-3">
-              ${t('skipIntro')} &rarr;
+            <!-- Seamless Transition Button -->
+            <button onclick="advanceToIntroStep(2)" class="mt-5 text-xs font-semibold text-emerald-300/90 hover:text-white transition-all py-1.5 px-4 rounded-full border border-emerald-500/30 hover:border-emerald-400 bg-emerald-950/50 backdrop-blur-md active:scale-95 flex items-center space-x-1.5">
+              <span>${t('continueBtn')}</span>
+              <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
             </button>
           </div>
         `;
@@ -1074,133 +1077,205 @@
           if (line) line.style.width = '100%';
         }, 60);
 
-        // After 3.4 seconds, smoothly transition into the main FarmSathi website
+        // After 3.5 seconds, smoothly transition to Step 2: Language Selection
         introAutoTimer = setTimeout(() => {
-          if (onboardingStep === 1) enterCommandCenter();
-        }, 3400);
+          if (onboardingStep === 1) advanceToIntroStep(2);
+        }, 3500);
 
       } else if (onboardingStep === 2) {
-        // STEP 2: Language Selection (English, Hindi, Telugu only)
+        // STEP 2: Language Selection (English, Telugu, Hindi)
         container.innerHTML = `
-          <div class="w-full max-w-md p-6 sm:p-8 bg-white text-slate-900 rounded-3xl shadow-2xl m-4 border border-slate-100 flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-300">
-            <div class="w-14 h-14 rounded-2xl bg-forest-100 text-forest-700 flex items-center justify-center mb-5">
-              <i data-lucide="languages" class="w-7 h-7"></i>
+          <div class="relative w-full h-full min-h-screen flex flex-col items-center justify-center p-6 text-center select-none overflow-hidden bg-gradient-to-b from-[#05130b] via-[#092617] to-[#041209] text-white">
+            
+            <!-- Ambient Glow -->
+            <div class="absolute w-[500px] h-[500px] rounded-full bg-emerald-500/10 blur-[130px] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none"></div>
+
+            <!-- Obsidian Glass Center Card -->
+            <div class="relative z-10 w-full max-w-md p-6 sm:p-8 bg-slate-950/85 backdrop-blur-2xl border border-emerald-500/30 rounded-3xl shadow-2xl shadow-emerald-950/60 flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-300">
+              
+              <!-- Step Badge -->
+              <div class="inline-flex items-center space-x-2 px-3 py-1 bg-emerald-900/50 border border-emerald-500/30 rounded-full text-[11px] font-bold text-emerald-300 uppercase tracking-wider mb-4">
+                <span>🌿 STEP 1 OF 2</span>
+                <span class="text-white/40">•</span>
+                <span>LANGUAGE PREFERENCE</span>
+              </div>
+
+              <!-- Sprout Glyph Badge -->
+              <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-800 to-teal-600 text-white flex items-center justify-center shadow-lg shadow-emerald-900/40 mb-4 border border-emerald-400/30">
+                <i data-lucide="languages" class="w-7 h-7"></i>
+              </div>
+
+              <h2 class="text-2xl font-black text-white tracking-tight mb-1">
+                ${t('chooseLang')}
+              </h2>
+              <div class="text-xs font-semibold text-emerald-300 mb-2">
+                మీ భాషను ఎంచుకోండి • अपनी भाषा चुनें
+              </div>
+              <p class="text-xs text-slate-400 mb-6 leading-relaxed max-w-xs">
+                ${t('chooseLangSub')}
+              </p>
+
+              <!-- Language Cards -->
+              <div class="w-full space-y-2.5 mb-6 text-left">
+                <!-- English -->
+                <button onclick="selectLanguage('en')" class="w-full flex items-center justify-between p-3.5 rounded-2xl border transition-all ${STATE.lang === 'en' ? 'border-emerald-400 bg-emerald-900/40 text-white font-bold shadow-lg shadow-emerald-950/40 ring-1 ring-emerald-400/50' : 'border-white/10 hover:border-emerald-500/40 bg-white/5 text-slate-300'}">
+                  <div class="flex items-center space-x-3.5">
+                    <span class="text-2xl">🇬🇧</span>
+                    <div>
+                      <div class="text-sm font-bold text-white">English</div>
+                      <div class="text-[11px] text-slate-400">Default & Voice Advisory</div>
+                    </div>
+                  </div>
+                  ${STATE.lang === 'en' ? '<div class="w-6 h-6 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center"><i data-lucide="check" class="w-4 h-4 stroke-[3]"></i></div>' : '<div class="w-5 h-5 rounded-full border border-white/20"></div>'}
+                </button>
+
+                <!-- Telugu -->
+                <button onclick="selectLanguage('te')" class="w-full flex items-center justify-between p-3.5 rounded-2xl border transition-all ${STATE.lang === 'te' ? 'border-emerald-400 bg-emerald-900/40 text-white font-bold shadow-lg shadow-emerald-950/40 ring-1 ring-emerald-400/50' : 'border-white/10 hover:border-emerald-500/40 bg-white/5 text-slate-300'}">
+                  <div class="flex items-center space-x-3.5">
+                    <span class="text-2xl">🇮🇳</span>
+                    <div>
+                      <div class="text-sm font-bold text-white">తెలుగు (Telugu)</div>
+                      <div class="text-[11px] text-slate-400">ఆంధ్రప్రదేశ్ & తెలంగాణ రైతుల కోసం</div>
+                    </div>
+                  </div>
+                  ${STATE.lang === 'te' ? '<div class="w-6 h-6 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center"><i data-lucide="check" class="w-4 h-4 stroke-[3]"></i></div>' : '<div class="w-5 h-5 rounded-full border border-white/20"></div>'}
+                </button>
+
+                <!-- Hindi -->
+                <button onclick="selectLanguage('hi')" class="w-full flex items-center justify-between p-3.5 rounded-2xl border transition-all ${STATE.lang === 'hi' ? 'border-emerald-400 bg-emerald-900/40 text-white font-bold shadow-lg shadow-emerald-950/40 ring-1 ring-emerald-400/50' : 'border-white/10 hover:border-emerald-500/40 bg-white/5 text-slate-300'}">
+                  <div class="flex items-center space-x-3.5">
+                    <span class="text-2xl">🇮🇳</span>
+                    <div>
+                      <div class="text-sm font-bold text-white">हिन्दी (Hindi)</div>
+                      <div class="text-[11px] text-slate-400">भारतीय किसानों और बागवानों के लिए</div>
+                    </div>
+                  </div>
+                  ${STATE.lang === 'hi' ? '<div class="w-6 h-6 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center"><i data-lucide="check" class="w-4 h-4 stroke-[3]"></i></div>' : '<div class="w-5 h-5 rounded-full border border-white/20"></div>'}
+                </button>
+              </div>
+
+              <!-- Next Step CTA -->
+              <button onclick="advanceToIntroStep(3)" class="w-full py-4 px-6 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-2xl font-black text-sm shadow-xl shadow-emerald-700/30 transition-all flex items-center justify-center space-x-2 active:scale-[0.98]">
+                <span>${loc('లొకేషన్ సెటప్‌కు కొనసాగండి', 'स्थान सेटअप के लिए आगे बढ़ें', 'Continue to GPS Setup')}</span>
+                <i data-lucide="arrow-right" class="w-4 h-4"></i>
+              </button>
             </div>
-            <h2 class="text-2xl font-bold text-slate-900 mb-2">${t('chooseLang')}</h2>
-            <p class="text-xs text-slate-500 mb-6 leading-relaxed">${t('chooseLangSub')}</p>
-
-            <div class="w-full space-y-3 mb-6">
-              <button onclick="selectLanguage('en')" class="w-full flex items-center justify-between p-4 rounded-2xl border-2 transition ${STATE.lang === 'en' ? 'border-forest-600 bg-forest-50/70 text-forest-900 font-bold shadow-sm' : 'border-slate-200 hover:border-forest-300 bg-white text-slate-700 font-medium'}">
-                <div class="flex items-center space-x-3">
-                  <span class="text-2xl">🇬🇧</span>
-                  <div class="text-left">
-                    <div class="text-sm">English</div>
-                    <div class="text-[11px] text-slate-500">Default International</div>
-                  </div>
-                </div>
-                ${STATE.lang === 'en' ? '<i data-lucide="check-circle-2" class="w-5 h-5 text-forest-600"></i>' : ''}
-              </button>
-
-              <button onclick="selectLanguage('hi')" class="w-full flex items-center justify-between p-4 rounded-2xl border-2 transition ${STATE.lang === 'hi' ? 'border-forest-600 bg-forest-50/70 text-forest-900 font-bold shadow-sm' : 'border-slate-200 hover:border-forest-300 bg-white text-slate-700 font-medium'}">
-                <div class="flex items-center space-x-3">
-                  <span class="text-2xl">🇮🇳</span>
-                  <div class="text-left">
-                    <div class="text-sm font-semibold">हिन्दी</div>
-                    <div class="text-[11px] text-slate-500">Hindi Regional</div>
-                  </div>
-                </div>
-                ${STATE.lang === 'hi' ? '<i data-lucide="check-circle-2" class="w-5 h-5 text-forest-600"></i>' : ''}
-              </button>
-
-              <button onclick="selectLanguage('te')" class="w-full flex items-center justify-between p-4 rounded-2xl border-2 transition ${STATE.lang === 'te' ? 'border-forest-600 bg-forest-50/70 text-forest-900 font-bold shadow-sm' : 'border-slate-200 hover:border-forest-300 bg-white text-slate-700 font-medium'}">
-                <div class="flex items-center space-x-3">
-                  <span class="text-2xl">🇮🇳</span>
-                  <div class="text-left">
-                    <div class="text-sm font-semibold">తెలుగు</div>
-                    <div class="text-[11px] text-slate-500">Telugu Regional</div>
-                  </div>
-                </div>
-                ${STATE.lang === 'te' ? '<i data-lucide="check-circle-2" class="w-5 h-5 text-forest-600"></i>' : ''}
-              </button>
-            </div>
-
-            <button onclick="skipToStep(3)" class="w-full py-3.5 px-6 bg-forest-600 hover:bg-forest-700 text-white rounded-xl font-bold text-sm shadow-md shadow-forest-600/30 transition flex items-center justify-center space-x-2">
-              <span>${t('continueBtn')}</span>
-              <i data-lucide="arrow-right" class="w-4 h-4"></i>
-            </button>
           </div>
         `;
         lucide.createIcons();
 
       } else if (onboardingStep === 3) {
-        // STEP 3: Location Setup (GPS priority + fallback)
+        // STEP 3: Turn On GPS / Location Setup
         container.innerHTML = `
-          <div class="w-full max-w-md p-6 sm:p-8 bg-white text-slate-900 rounded-3xl shadow-2xl m-4 border border-slate-100 flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-300">
-            <div class="w-16 h-16 rounded-2xl bg-forest-100 text-forest-700 flex items-center justify-center mb-5 relative">
-              <i data-lucide="map-pin" class="w-8 h-8 text-forest-600"></i>
-              <span class="absolute -top-1 -right-1 flex h-3 w-3">
-                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-forest-400 opacity-75"></span>
-                <span class="relative inline-flex rounded-full h-3 w-3 bg-forest-500"></span>
-              </span>
-            </div>
+          <div class="relative w-full h-full min-h-screen flex flex-col items-center justify-center p-6 text-center select-none overflow-hidden bg-gradient-to-b from-[#05130b] via-[#092617] to-[#041209] text-white">
+            
+            <!-- Ambient Glow -->
+            <div class="absolute w-[500px] h-[500px] rounded-full bg-teal-500/10 blur-[130px] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none"></div>
 
-            <h2 class="text-2xl font-bold text-slate-900 mb-2 leading-snug">${t('locationTitle')}</h2>
-            <p class="text-xs text-slate-500 mb-6 leading-relaxed">${t('locationSub')}</p>
-
-            <div id="location-error-msg" class="w-full hidden mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs text-left">
-              <div class="font-bold flex items-center mb-1">
-                <i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1 text-amber-600"></i>
-                <span id="loc-err-title">${t('gpsFail')}</span>
+            <!-- Obsidian Glass Center Card -->
+            <div class="relative z-10 w-full max-w-lg p-6 sm:p-8 bg-slate-950/85 backdrop-blur-2xl border border-emerald-500/30 rounded-3xl shadow-2xl shadow-emerald-950/60 flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-300">
+              
+              <!-- Step Badge -->
+              <div class="inline-flex items-center space-x-2 px-3 py-1 bg-emerald-900/50 border border-emerald-500/30 rounded-full text-[11px] font-bold text-emerald-300 uppercase tracking-wider mb-4">
+                <span>🛰️ STEP 2 OF 2</span>
+                <span class="text-white/40">•</span>
+                <span>GPS CALIBRATION</span>
               </div>
-              <p id="loc-err-desc">Please choose your city manually below.</p>
-            </div>
 
-            <button id="btn-allow-gps" onclick="requestBrowserGPS()" class="w-full py-3.5 px-6 bg-forest-600 hover:bg-forest-700 text-white rounded-xl font-bold text-sm shadow-md shadow-forest-600/30 transition flex items-center justify-center space-x-2 mb-3">
-              <i data-lucide="crosshair" class="w-4 h-4"></i>
-              <span>${t('allowLocationBtn')}</span>
-            </button>
-
-            <button onclick="toggleManualLocationInput(true)" class="w-full py-3 px-6 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs transition flex items-center justify-center space-x-2">
-              <i data-lucide="search" class="w-4 h-4"></i>
-              <span>${t('manualLocationBtn')}</span>
-            </button>
-
-            <!-- Manual input field (toggleable) -->
-            <div id="manual-location-box" class="w-full hidden mt-4 pt-4 border-t border-slate-100 text-left">
-              <label class="block text-xs font-semibold text-slate-700 mb-1">Search City, Town or Village:</label>
-              <div class="relative flex">
-                <input id="manual-city-input" type="text" placeholder="${t('searchCityPlaceholder')}" 
-                  class="w-full px-3.5 py-2.5 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-forest-500 focus:outline-none"
-                  onkeydown="if(event.key==='Enter') searchCityGeocode()" />
-                <button onclick="searchCityGeocode()" class="ml-2 px-4 py-2 bg-forest-600 text-white text-xs font-semibold rounded-xl hover:bg-forest-700 transition">
-                  Go
-                </button>
+              <!-- Radar Map-Pin Emblem -->
+              <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-800 to-teal-600 text-white flex items-center justify-center shadow-lg shadow-emerald-900/40 mb-4 border border-emerald-400/30 relative">
+                <i data-lucide="map-pin" class="w-8 h-8 text-emerald-200"></i>
+                <span class="absolute -top-1 -right-1 flex h-3.5 w-3.5">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-400"></span>
+                </span>
               </div>
-              <div class="mt-2 flex flex-wrap gap-1.5">
-                <span class="text-[10px] text-slate-400 self-center">Popular:</span>
-                <button onclick="selectPresetCity('Rajkot', 22.3039, 70.8022)" class="text-[10px] bg-slate-100 hover:bg-forest-50 hover:text-forest-700 px-2 py-0.5 rounded-md font-medium text-slate-600">Rajkot</button>
-                <button onclick="selectPresetCity('Talala', 21.0532, 70.5284)" class="text-[10px] bg-slate-100 hover:bg-forest-50 hover:text-forest-700 px-2 py-0.5 rounded-md font-medium text-slate-600">Talala</button>
-                <button onclick="selectPresetCity('Hyderabad', 17.3850, 78.4867)" class="text-[10px] bg-slate-100 hover:bg-forest-50 hover:text-forest-700 px-2 py-0.5 rounded-md font-medium text-slate-600">Hyderabad</button>
-                <button onclick="selectPresetCity('Bengaluru', 12.9716, 77.5946)" class="text-[10px] bg-slate-100 hover:bg-forest-50 hover:text-forest-700 px-2 py-0.5 rounded-md font-medium text-slate-600">Bengaluru</button>
-                <button onclick="selectPresetCity('Ahmedabad', 23.0225, 72.5714)" class="text-[10px] bg-slate-100 hover:bg-forest-50 hover:text-forest-700 px-2 py-0.5 rounded-md font-medium text-slate-600">Ahmedabad</button>
+
+              <h2 class="text-2xl sm:text-3xl font-black text-white tracking-tight mb-1">
+                ${loc('లొకేషన్ / జీపీఎస్ ఆన్ చేయండి', 'जीपीएस / लोकेशन चालू करें', 'Turn On GPS / Location')}
+              </h2>
+              <div class="text-xs font-semibold text-emerald-300 mb-2">
+                ${loc('నిజ సమయ ఉపగ్రహ వాతావరణ సింక్', 'वास्तविक समय उपग्रह मौसम सिंक', 'Real-Time Satellite Microclimate Sync')}
               </div>
-              <div id="geocode-results" class="mt-2 space-y-1"></div>
+              <p class="text-xs text-slate-400 mb-6 leading-relaxed max-w-md">
+                ${loc('ఖచ్చితమైన ఉపగ్రహ వాతావరణం, మట్టి తేమ మరియు స్థానిక AP/TS మార్కెట్ ధరల కోసం మీ GPS లొకేషన్‌ను ఆన్ చేయండి.', 'सटीक उपग्रह मौसम, मिट्टी की नमी और स्थानीय मंडी भाव के लिए अपना जीपीएस स्थान चालू करें।', 'Turn on GPS to calibrate real-time satellite microclimate, soil moisture alerts, and local AP/TS mandi rates for your crops.')}
+              </p>
+
+              <!-- SUCCESS MESSAGE (Appears on detection) -->
+              <div id="location-success-msg" class="w-full hidden mb-4 p-3.5 bg-emerald-900/60 border border-emerald-400 text-emerald-200 rounded-2xl text-xs font-semibold text-left flex items-start space-x-2.5">
+                <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-300 shrink-0 mt-0.5"></i>
+                <div id="loc-success-text">Location calibrated successfully!</div>
+              </div>
+
+              <!-- ERROR / FALLBACK MESSAGE -->
+              <div id="location-error-msg" class="w-full hidden mb-4 p-3.5 bg-amber-950/70 border border-amber-500/40 text-amber-200 rounded-2xl text-xs text-left">
+                <div class="font-bold flex items-center mb-1 text-amber-300">
+                  <i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1.5 text-amber-400"></i>
+                  <span id="loc-err-title">${t('gpsFail')}</span>
+                </div>
+                <p id="loc-err-desc" class="text-amber-100/80">Please choose your farming region or city manually below.</p>
+              </div>
+
+              <!-- PRIMARY ACTION: Turn on GPS -->
+              <button id="btn-allow-gps" onclick="requestBrowserGPS()" class="w-full py-4 px-6 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-2xl font-black text-sm sm:text-base shadow-xl shadow-emerald-700/40 transition-all flex items-center justify-center space-x-3 mb-3 active:scale-[0.98]">
+                <span class="relative flex h-4 w-4">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-200 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-4 w-4 bg-white"></span>
+                </span>
+                <span>${loc('📍 GPS ఆన్ చేయండి / నా లొకేషన్ గుర్తించండి', '📍 जीपीएस चालू करें / मेरा स्थान खोजें', '📍 Turn On GPS / Detect My Location')}</span>
+              </button>
+
+              <!-- SECONDARY ACTION: Manual Region Selector Toggle -->
+              <button onclick="toggleManualLocationInput(true)" class="w-full py-3 px-6 bg-white/10 hover:bg-white/15 text-slate-300 hover:text-white rounded-2xl font-semibold text-xs transition border border-white/10 flex items-center justify-center space-x-2 mb-2">
+                <i data-lucide="map" class="w-4 h-4 text-emerald-400"></i>
+                <span>${loc('లేదా వ్యవసాయ ప్రాంతాన్ని నేరుగా ఎంచుకోండి', 'या कृषि क्षेत्र सीधे चुनें', 'Or Choose Farming Region Manually')}</span>
+              </button>
+
+              <!-- Back to Language Button -->
+              <button onclick="advanceToIntroStep(2)" class="text-[11px] text-slate-400 hover:text-emerald-300 transition-colors py-1 flex items-center space-x-1">
+                <i data-lucide="arrow-left" class="w-3 h-3"></i>
+                <span>${loc('భాష మార్చుకోండి', 'भाषा बदलें', 'Change Language')}</span>
+              </button>
+
+              <!-- MANUAL LOCATION SELECTION DRAWER -->
+              <div id="manual-location-box" class="w-full mt-4 pt-4 border-t border-white/10 text-left">
+                <label class="block text-xs font-semibold text-slate-300 mb-1.5">
+                  ${loc('నగరం లేదా మార్కెట్ యార్డ్ శోధించండి:', 'शहर या मंडी यार्ड खोजें:', 'Search City, Town or Mandi Hub:')}
+                </label>
+                <div class="relative flex mb-3">
+                  <input id="manual-city-input" type="text" placeholder="${t('searchCityPlaceholder')}" 
+                    class="w-full px-3.5 py-2.5 text-xs bg-white/10 border border-white/20 text-white placeholder:text-slate-500 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    onkeydown="if(event.key==='Enter') searchCityGeocode()" />
+                  <button onclick="searchCityGeocode()" class="ml-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition shrink-0">
+                    Search
+                  </button>
+                </div>
+
+                <div class="mb-2">
+                  <span class="text-[10px] uppercase font-bold tracking-wider text-slate-400 block mb-1.5">
+                    ${loc('ప్రముఖ ప్రాంతాలు (ఆంధ్రప్రదేశ్ & తెలంగాణ):', 'प्रमुख क्षेत्र (आंध्र व तेलंगाना):', 'Popular AP, TS & National Hubs:')}
+                  </span>
+                  <div class="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+                    <button onclick="selectPresetCity('Hyderabad, Telangana', 17.3850, 78.4867)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🌾 Hyderabad</button>
+                    <button onclick="selectPresetCity('Guntur, Andhra Pradesh', 16.3067, 80.4365)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🌶️ Guntur</button>
+                    <button onclick="selectPresetCity('Vijayawada, Andhra Pradesh', 16.5062, 80.6480)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🌾 Vijayawada</button>
+                    <button onclick="selectPresetCity('Warangal, Telangana', 17.9689, 79.5941)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🌾 Warangal</button>
+                    <button onclick="selectPresetCity('Tirupati, Andhra Pradesh', 13.6288, 79.4192)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🍅 Tirupati</button>
+                    <button onclick="selectPresetCity('Kurnool, Andhra Pradesh', 15.8281, 78.0373)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🧅 Kurnool</button>
+                    <button onclick="selectPresetCity('Visakhapatnam, Andhra Pradesh', 17.6868, 83.2185)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🌾 Visakhapatnam</button>
+                    <button onclick="selectPresetCity('Rajahmundry, Andhra Pradesh', 17.0005, 81.8040)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🌾 Rajahmundry</button>
+                    <button onclick="selectPresetCity('Nizamabad, Telangana', 18.6725, 78.0941)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🌾 Nizamabad</button>
+                    <button onclick="selectPresetCity('Bengaluru, Karnataka', 12.9716, 77.5946)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🌿 Bengaluru</button>
+                    <button onclick="selectPresetCity('Pune, Maharashtra', 18.5204, 73.8567)" class="text-[11px] bg-white/10 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg font-semibold text-slate-300 border border-white/10 transition">🌾 Pune</button>
+                  </div>
+                </div>
+                <div id="geocode-results" class="mt-2 space-y-1"></div>
+              </div>
             </div>
           </div>
         `;
         lucide.createIcons();
       }
-    }
-
-    function skipToStep(step) {
-      onboardingStep = step;
-      renderOnboardingStep();
-    }
-
-    function selectLanguage(langCode) {
-      STATE.lang = langCode;
-      saveState();
-      renderOnboardingStep();
     }
 
     function toggleManualLocationInput(show) {
@@ -1218,7 +1293,13 @@
     function requestBrowserGPS() {
       const btn = document.getElementById('btn-allow-gps');
       const errBox = document.getElementById('location-error-msg');
-      if (btn) btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> <span>${t('detectingGps')}</span>`;
+      const successBox = document.getElementById('location-success-msg');
+      const successText = document.getElementById('loc-success-text');
+      
+      if (errBox) errBox.classList.add('hidden');
+      if (btn) {
+        btn.innerHTML = `<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> <span>${loc('ఉపగ్రహాలతో అనుసంధానిస్తోంది & GPS గుర్తిస్తోంది...', 'उपग्रहों से जुड़ रहे हैं और जीपीएस खोज रहे हैं...', 'Connecting to Satellites & Detecting GPS...')}</span>`;
+      }
       lucide.createIcons();
 
       if (!navigator.geolocation) {
@@ -1233,12 +1314,14 @@
           let cityName = `GPS (${lat.toFixed(2)}°, ${lon.toFixed(2)}°)`;
 
           try {
-            // Reverse geocode via Open-Meteo or BigDataCloud
+            // Reverse geocode via BigDataCloud or Open-Meteo
             const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
             if (res.ok) {
               const data = await res.json();
               if (data.city || data.locality) {
-                cityName = `${data.city || data.locality}, ${data.principalSubdivision || ''}`.trim();
+                const locality = data.locality || data.city;
+                const admin = data.principalSubdivision || '';
+                cityName = admin ? `${locality}, ${admin}` : locality;
               }
             }
           } catch (e) {
@@ -1247,8 +1330,23 @@
 
           STATE.location = { name: cityName, lat, lon };
           saveState();
-          showToast(t('gpsSuccess'));
-          completeOnboarding();
+
+          if (btn) {
+            btn.classList.remove('from-emerald-600', 'to-teal-600');
+            btn.classList.add('bg-emerald-500');
+            btn.innerHTML = `<i data-lucide="check-circle" class="w-5 h-5 text-white"></i> <span>✓ GPS Calibrated: ${cityName.split(',')[0]}</span>`;
+          }
+          if (successBox) {
+            successBox.classList.remove('hidden');
+            if (successText) {
+              successText.innerHTML = `✓ <b>Location Calibrated:</b> ${cityName}<br/><span class="text-[11px] text-emerald-300">Opening FarmSathi command deck...</span>`;
+            }
+          }
+          lucide.createIcons();
+
+          setTimeout(() => {
+            completeOnboarding();
+          }, 800);
         },
         (error) => {
           let msg = t('gpsFail');
@@ -1259,20 +1357,22 @@
           }
           handleGpsFailure(msg);
         },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+        { enableHighAccuracy: true, timeout: 9000, maximumAge: 60000 }
       );
     }
 
     function handleGpsFailure(message) {
       const btn = document.getElementById('btn-allow-gps');
-      if (btn) btn.innerHTML = `<i data-lucide="crosshair" class="w-4 h-4"></i> <span>${t('allowLocationBtn')}</span>`;
+      if (btn) {
+        btn.innerHTML = `<span class="relative flex h-4 w-4"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-200 opacity-75"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-white"></span></span> <span>${loc('📍 మళ్లీ ప్రయత్నించండి', '📍 पुनः प्रयास करें', '📍 Try GPS Again')}</span>`;
+      }
       const errBox = document.getElementById('location-error-msg');
       const errTitle = document.getElementById('loc-err-title');
       const errDesc = document.getElementById('loc-err-desc');
       if (errBox) {
         errBox.classList.remove('hidden');
         if (errTitle) errTitle.textContent = t('gpsFail');
-        if (errDesc) errDesc.textContent = `${message} Please select your location manually below.`;
+        if (errDesc) errDesc.textContent = `${message} Please select your farming region manually below.`;
       }
       toggleManualLocationInput(true);
       lucide.createIcons();
@@ -1284,7 +1384,7 @@
       if (!query) return;
 
       const resultsDiv = document.getElementById('geocode-results');
-      if (resultsDiv) resultsDiv.innerHTML = `<div class="text-xs text-slate-500 py-1 flex items-center"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin mr-1.5"></i> Searching places...</div>`;
+      if (resultsDiv) resultsDiv.innerHTML = `<div class="text-xs text-slate-400 py-1 flex items-center"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin mr-1.5 text-emerald-400"></i> Searching places...</div>`;
       lucide.createIcons();
 
       try {
@@ -1294,16 +1394,16 @@
         if (data && data.results && data.results.length > 0) {
           resultsDiv.innerHTML = data.results.map(r => `
             <button onclick="selectPresetCity('${r.name}, ${r.admin1 || r.country || ''}', ${r.latitude}, ${r.longitude})" 
-              class="w-full text-left px-3 py-2 text-xs bg-slate-50 hover:bg-forest-50 hover:text-forest-800 rounded-lg border border-slate-200 transition flex items-center justify-between">
+              class="w-full text-left px-3 py-2 text-xs bg-white/10 hover:bg-emerald-600 text-white rounded-lg border border-white/15 transition flex items-center justify-between">
               <span class="font-medium">${r.name}, ${r.admin1 ? r.admin1 + ', ' : ''}${r.country}</span>
-              <span class="text-[10px] text-slate-400 font-mono">${r.latitude.toFixed(2)}, ${r.longitude.toFixed(2)}</span>
+              <span class="text-[10px] text-emerald-300 font-mono">${r.latitude.toFixed(2)}, ${r.longitude.toFixed(2)}</span>
             </button>
           `).join('');
         } else {
-          resultsDiv.innerHTML = `<div class="text-xs text-amber-600 py-1">No matching locations found. Try another city name.</div>`;
+          resultsDiv.innerHTML = `<div class="text-xs text-amber-300 py-1">No matching locations found. Try another city name.</div>`;
         }
       } catch (e) {
-        resultsDiv.innerHTML = `<div class="text-xs text-rose-600 py-1">Failed to search locations. Please check internet.</div>`;
+        resultsDiv.innerHTML = `<div class="text-xs text-rose-400 py-1">Failed to search locations. Please check internet.</div>`;
       }
       lucide.createIcons();
     }
@@ -1311,19 +1411,38 @@
     function selectPresetCity(name, lat, lon) {
       STATE.location = { name, lat, lon };
       saveState();
-      showToast(`Selected: ${name}`);
+      showToast(`Selected: ${name.split(',')[0]}`);
       completeOnboarding();
     }
 
     function completeOnboarding() {
       STATE.onboarded = true;
+      localStorage.setItem('farmsathi_onboarded', 'true');
+      localStorage.setItem('farmsathi_gps_calibrated', 'true');
+      sessionStorage.setItem('farmsathi_session_onboarded', 'true');
+      sessionStorage.setItem('farmsathi_intro_shown', 'true');
       saveState();
+
       const container = document.getElementById('onboarding-container');
       const mainContent = document.getElementById('main-content');
-      container.classList.add('hidden');
-      mainContent.classList.remove('hidden');
+      
+      if (container) {
+        container.style.transition = 'opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1)';
+        container.style.opacity = '0';
+        container.style.transform = 'scale(0.98)';
+        container.classList.add('pointer-events-none');
+        setTimeout(() => {
+          container.classList.add('hidden');
+          container.style.transform = '';
+        }, 700);
+      }
+      if (mainContent) {
+        mainContent.classList.remove('hidden');
+      }
+
       initMainApp();
-      refreshWeather();
+      refreshWeather(true);
+      showToast(`🌾 Location active: ${STATE.location.name.split(',')[0]}!`);
     }
 
     // REGIONAL LOCATIONS DIRECTORY (ANDHRA PRADESH & TELANGANA + NATIONAL HUBS)
