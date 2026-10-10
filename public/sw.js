@@ -1,5 +1,5 @@
-// FarmSathi Offline Service Worker v2.0
-const CACHE_NAME = 'farmsathi-offline-v2';
+// FarmSathi Offline Service Worker v3.0
+const CACHE_NAME = 'farmsathi-offline-v3';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -9,6 +9,10 @@ const PRECACHE_ASSETS = [
   '/pwa-512x512.png',
   '/pwa-maskable-512x512.png',
   '/apple-touch-icon.png',
+  '/assets/plants/cotton_plant.jpg',
+  '/assets/plants/chilli_plant.jpg',
+  '/assets/plants/groundnut_plant.jpg',
+  '/assets/plants/paddy_plant.jpg',
   '/assets/plants/watermelon_plant.jpg',
   '/assets/plants/red_rose_plant.jpg',
   '/assets/plants/jasmine_plant.jpg',

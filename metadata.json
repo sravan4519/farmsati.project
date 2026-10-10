@@ -1,6 +1,6 @@
 {
   "name": "FarmSathi - AI Urban Farming Assistant",
-  "description": "An AI-powered urban farming and plant-care assistant connecting plant health, live weather, smart watering, and AI plant doctor.",
+  "description": "Precision Agronomy for Smallholder & Marginal Farmers. Healthier Crops. Smarter Care. AI field agronomy assistant connecting crop health, hyper-local weather, knapsack tank calculations, and AI plant doctor.",
   "requestFramePermissions": ["geolocation", "microphone", "camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
