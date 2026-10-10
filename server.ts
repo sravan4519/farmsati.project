@@ -123,6 +123,93 @@ app.get('/api/reverse-geocode', async (req, res) => {
   return res.status(500).json({ error: 'Reverse geocode failed' });
 });
 
+// Tri-Lingual Audio Speech Synthesis Proxy Endpoint (100% pure Telugu & Hindi audio without English fallback)
+app.get('/api/tts', async (req, res) => {
+  try {
+    const { text, lang } = req.query;
+    if (!text || typeof text !== 'string') {
+      return res.status(400).send('Text required');
+    }
+    const tl = (lang === 'te' || lang === 'te-IN') ? 'te' : (lang === 'hi' || lang === 'hi-IN') ? 'hi' : 'en';
+    const cleanText = text.slice(0, 280);
+    const googleTtsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${tl}&client=tw-ob&q=${encodeURIComponent(cleanText)}`;
+
+    const ttsRes = await fetch(googleTtsUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://translate.google.com/'
+      }
+    });
+
+    if (ttsRes.ok) {
+      const buffer = await ttsRes.arrayBuffer();
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.send(Buffer.from(buffer));
+    }
+    return res.status(502).send('TTS upstream error');
+  } catch (err: any) {
+    console.error('Error in /api/tts:', err);
+    return res.status(500).send('TTS server error');
+  }
+});
+
+// Strict Non-Plant & Human Detection Guardrail Sanitizer
+function sanitizeDiagnosisResult(parsedResult: any) {
+  if (!parsedResult) return null;
+  const issueLower = (parsedResult.issue || '').toLowerCase();
+  const subjectLower = (parsedResult.detectedSubject || '').toLowerCase();
+  const plantLower = (parsedResult.predictedPlant || parsedResult.cropName || '').toLowerCase();
+  const descLower = (parsedResult.explanation || parsedResult.leafCharacteristics || parsedResult.subDiagnosis || '').toLowerCase();
+
+  const nonPlantKeywords = [
+    'human', 'person', 'people', 'man', 'woman', 'child', 'boy', 'girl', 'face', 'portrait', 'selfie',
+    'body', 'skin', 'hand', 'finger', 'fingers', 'foot', 'feet', 'leg', 'arm',
+    'desk', 'table', 'chair', 'furniture', 'office', 'indoor', 'room', 'wall', 'floor',
+    'shoe', 'shoes', 'boot', 'boots', 'slipper', 'slippers', 'footwear', 'sock', 'socks',
+    'animal', 'animals', 'dog', 'dogs', 'cat', 'cats', 'pet', 'pets', 'bird', 'cow', 'goat',
+    'vehicle', 'car', 'bike', 'motorcycle', 'bicycle',
+    'computer', 'laptop', 'screen', 'monitor', 'keyboard', 'mouse', 'phone', 'mobile',
+    'clothes', 'clothing', 'shirt', 'pants', 'dress', 'fabric',
+    'non-plant', 'not a plant', 'no crop foliage', 'none'
+  ];
+
+  const hasNonPlantKeyword = nonPlantKeywords.some(kw =>
+    subjectLower.includes(kw) || issueLower.includes(kw) || plantLower.includes(kw) || descLower.includes(kw)
+  );
+
+  const isHumanOrNonPlant = parsedResult.isPlant === false || hasNonPlantKeyword;
+
+  if (isHumanOrNonPlant) {
+    return {
+      isPlant: false,
+      predictedPlant: "No crop foliage detected",
+      leafCharacteristics: "Non-crop subject detected (human face, body, indoor desk, shoes, animals, or non-plant objects)",
+      detectedSubject: parsedResult.detectedSubject || "Non-Plant / Human Detected",
+      cropName: "None",
+      issue: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+      alertBadge: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+      subDiagnosis: "No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+      explanation: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+      causes: [],
+      medicines: {
+        organic: [],
+        agricultural: [],
+        schedule: []
+      },
+      toCheck: [],
+      toDo: [],
+      notToDo: [],
+      recoveryPrognosis: ""
+    };
+  }
+
+  if (!parsedResult.predictedPlant && parsedResult.cropName) {
+    parsedResult.predictedPlant = parsedResult.cropName;
+  }
+  return parsedResult;
+}
+
 // AI Plant Doctor Vision Diagnosis Endpoint
 app.post('/api/diagnose', async (req, res) => {
   try {
@@ -152,11 +239,38 @@ app.post('/api/diagnose', async (req, res) => {
     const prompt = `You are FarmSathi AI Agricultural Doctor, an expert plant pathologist, agronomist, and crop specialist for Indian and global agriculture.
 Your job is to analyze this leaf/crop image, FIRST accurately predict WHICH PLANT SPECIES this leaf belongs to from its botanical morphology, and then diagnose any health problems or diseases.
 
-1. SUBJECT VERIFICATION:
-- Check if this image depicts a HUMAN BEING, person, face, selfie, body part, clothing, or group of people.
-  -> If YES, you MUST set "isPlant": false, "detectedSubject": "Human / Person", "issue": "Human Detected (Non-Plant)", "explanation": "A person or human portrait was recognized instead of an agricultural crop. FarmSathi AI Doctor diagnoses plant foliage and crop diseases only. Please upload a clear photo of your plant's leaf, stem, or crop."
-- Check if this image is a completely NON-BOTANICAL object (e.g. car, furniture, smartphone, pet animal, room interior without crops).
-  -> If YES, you MUST set "isPlant": false, "detectedSubject": "Non-Plant Object / Ineligible Image", "issue": "Non-Plant Subject Detected", "explanation": "No recognizable agricultural crop, foliage, or leaf tissue was detected in this photo. Please upload a clear photo of an affected plant leaf."
+1. STRICT NON-PLANT & HUMAN DETECTION GUARDRAIL (CRITICAL ZERO-TOLERANCE CHECK):
+Check if this image contains:
+- A human face, person, selfie, body parts, hand, fingers, skin, clothing, or group of people.
+- Indoor desk, table, computer, laptop, keyboard, monitor, office furniture, books, stationary, indoor room/walls/floors.
+- Shoes, footwear, slippers, socks, domestic animals, pets (dogs, cats, birds), vehicles, inanimate non-plant objects.
+- Any non-crop, non-plant, non-agricultural subject.
+
+If the image contains a human face, body, indoor desk, shoes, animals, or non-plant objects, OR DOES NOT clearly contain agricultural crop foliage/leaf/stem/flower:
+YOU MUST IMMEDIATELY STOP.
+Do NOT output "Healthy & vigorous foliage" or prescribe plant medicines!
+You MUST output strictly:
+{
+  "isPlant": false,
+  "predictedPlant": "No crop foliage detected",
+  "leafCharacteristics": "Non-crop or human subject recognized",
+  "detectedSubject": "Non-Plant / Human Detected",
+  "cropName": "None",
+  "issue": "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+  "alertBadge": "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+  "subDiagnosis": "No plant leaf, stem, or flower detected in image",
+  "explanation": "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+  "causes": [],
+  "medicines": {
+    "organic": [],
+    "agricultural": [],
+    "schedule": []
+  },
+  "toCheck": [],
+  "toDo": [],
+  "notToDo": [],
+  "recoveryPrognosis": ""
+}
 
 2. BOTANICAL LEAF & CROP SPECIES IDENTIFICATION (CRITICAL):
 Look closely at the leaf's physical architecture:
@@ -247,10 +361,8 @@ Output MUST be strictly valid JSON matching this schema:
       }
 
       if (parsedResult && typeof parsedResult.isPlant === 'boolean') {
-        if (!parsedResult.predictedPlant && parsedResult.cropName) {
-          parsedResult.predictedPlant = parsedResult.cropName;
-        }
-        return res.json(parsedResult);
+        const sanitized = sanitizeDiagnosisResult(parsedResult);
+        return res.json(sanitized);
       }
     } catch (aiErr: any) {
       console.warn('Primary Gemini call error, trying gemini-flash-latest:', aiErr?.message || aiErr);
@@ -269,8 +381,8 @@ Output MUST be strictly valid JSON matching this schema:
         const cleaned = backupText.replace(/```json/gi, '').replace(/```/g, '').trim();
         const parsed = JSON.parse(cleaned);
         if (parsed && typeof parsed.isPlant === 'boolean') {
-          if (!parsed.predictedPlant && parsed.cropName) parsed.predictedPlant = parsed.cropName;
-          return res.json(parsed);
+          const sanitized = sanitizeDiagnosisResult(parsed);
+          return res.json(sanitized);
         }
       } catch (backupErr: any) {
         console.warn('Backup Gemini call unavailable, falling back to botanical engine:', backupErr?.message || backupErr);
@@ -813,7 +925,26 @@ function getFallbackDiagnosis(cropHint?: string, imageSample?: string) {
         "Do NOT apply top-dress urea when blast lesions are actively expanding",
         "Do NOT let water dry out completely during active tillering"
       ],
-      recoveryPrognosis: "Blast lesions arrested within 3 to 5 days; panicle emergence protected."
+      recoveryPrognosis: "Blast lesions desiccating; panicle emergence protected."
+    };
+  } else if (!hint || hint === 'auto') {
+    // Non-plant guardrail when no explicit crop hint is provided and image was not recognized
+    return {
+      isPlant: false,
+      predictedPlant: "No crop foliage detected",
+      leafCharacteristics: "Non-crop or human subject recognized",
+      detectedSubject: "Non-Plant / Human Detected",
+      cropName: "None",
+      issue: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+      alertBadge: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+      subDiagnosis: "No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+      explanation: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+      causes: [],
+      medicines: { organic: [], agricultural: [], schedule: [] },
+      toCheck: [],
+      toDo: [],
+      notToDo: [],
+      recoveryPrognosis: ""
     };
   } else {
     // Default smart botanical fallback: Tomato Early Blight (the #1 most common Indian crop leaf photo uploaded)
@@ -867,6 +998,84 @@ function getFallbackDiagnosis(cropHint?: string, imageSample?: string) {
     };
   }
 }
+
+// AI Agronomy Assistant Tri-Lingual Chat Endpoint
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, lang, location } = req.body;
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'Message text is required' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (apiKey) {
+      try {
+        const ai = new GoogleGenAI({ apiKey });
+        const prompt = `You are FarmSathi AI, an agronomist and crop specialist assistant for Indian & global agriculture.
+A farmer asked: "${message}". Location/Context: "${location || 'Telangana / Andhra Pradesh'}".
+Provide an authoritative, practical agronomic response with actionable steps, precautions, and organic/chemical recommendations.
+Return JSON ONLY with EXACTLY these three keys containing the translated answer in English, Telugu, and Hindi:
+{
+  "textEn": "Concise, expert English advice (2-3 sentences with dosage)",
+  "textTe": "రైతులకు ఉపయోగపడే సరళమైన స్పష్టమైన తెలుగు సమాధానం మరియు మందుల మోతాదు",
+  "textHi": "किसानों के लिए स्पष्ट और व्यावहारिक हिंदी सलाह और दवा की मात्रा"
+}`;
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.1-flash-lite',
+          contents: prompt,
+          config: { responseMimeType: 'application/json' }
+        });
+
+        if (response && response.text) {
+          const parsed = JSON.parse(response.text);
+          if (parsed.textEn && parsed.textTe && parsed.textHi) {
+            return res.json(parsed);
+          }
+        }
+      } catch (geminiErr) {
+        console.warn('Gemini chat API warning, falling back to local engine:', geminiErr);
+      }
+    }
+
+    // High-quality local multi-lingual fallback
+    const q = message.toLowerCase();
+    let textEn = "";
+    let textTe = "";
+    let textHi = "";
+
+    if (q.includes('yellow') && (q.includes('tomato') || q.includes('leaf') || q.includes('leaves') || q.includes('ఆకు') || q.includes('పీలీ'))) {
+      textEn = "Yellowing leaves in tomatoes are often caused by overwatering, poor drainage, or early nitrogen deficiency. Check for dark concentric bullseye rings (Early Blight). Spray Mancozeb 75% WP (2.5 g/L) or Neem Oil (5 ml/L). Water strictly at the root base.";
+      textTe = "టమోటా ఆకులు పసుపుగా మారడానికి నేలలో అధిక తేమ, నీరు నిల్వ ఉండటం లేదా నత్రజని లోపం కారణం. ఆకులపై నల్లటి వలయాకార మచ్చలు ఉంటే ఎర్లీ బ్లైట్ తెగులు సోకినట్లు. దీని నివారణకు మాంకోజెబ్ (2.5 గ్రా/లీ) లేదా వేపనూనె (5 మి.లీ/లీ) పిచికారీ చేయండి. మొదళ్ల వద్ద నీరు నిల్వ ఉండకుండా చూడండి.";
+      textHi = "टमाटर की पत्तियां पीली पड़ने का कारण जलभराव, खराब जल निकासी या नाइट्रोजन की कमी हो सकता है। यदि पत्तियों पर गोल कत्थई धब्बे हैं तो अगेती झुलसा का लक्षण है। रोकथाम के लिए मैंकोजेब (2.5 ग्राम/लीटर) या नीम तेल (5 मिली/लीटर) का छिड़काव करें।";
+    } else if (q.includes('chilli') || q.includes('మిరప') || q.includes('मिर्च') || q.includes('thrips') || q.includes('curl')) {
+      textEn = "For Chilli leaf curl and thrips: Install blue and yellow sticky traps (15 per acre). Spray Neem Oil 10,000 ppm (2.5 ml/L) or Imidacloprid 17.8% SL (0.5 ml/L). Avoid excess nitrogen fertilizer and spray during calm evening hours.";
+      textTe = "మిరప తామర పురుగులు మరియు బొబ్బర తెగులు (ఆకుముడుత) నివారణకు: ఎకరాకు 15 నీలం మరియు పసుపు జిగురు అట్టలు అమర్చండి. వేపనూనె 10,000 ppm (2.5 మి.లీ/లీ) లేదా ఇమిడాక్లోప్రిడ్ (0.5 మి.లీ/లీ) పిచికారీ చేయండి. సాయంత్రం వేళల్లో స్ప్రే చేయండి.";
+      textHi = "मिर्च में पत्ती मरोड़ और थ्रिप्स कीट नियंत्रण के लिए: प्रति एकड़ 15 नीले व पीले चिपचिपे ट्रैप लगाएं। नीम तेल 10,000 ppm (2.5 मिली/लीटर) या इमिडाक्लोप्रिड (0.5 मिली/लीटर) का छिड़काव शाम को करें।";
+    } else if (q.includes('corn') || q.includes('maize') || q.includes('మొక్కజొన్న') || q.includes('मक्का')) {
+      textEn = "For Corn / Maize: Scout for elongated grayish cigar-shaped lesions (Northern Leaf Blight). Apply Mancozeb 75% WP (2.5 g/L) or Neem Oil immediately. Ensure good plant spacing for sunlight penetration.";
+      textTe = "మొక్కజొన్న ఆకు ఎండు తెగులు నివారణకు: పొడవాటి చుట్ట ఆకారపు మచ్చలను గమనించండి. వెంటనే మాంకోజెబ్ (2.5 గ్రా/లీ) లేదా వేపనూనె పిచికారీ చేయండి. మొక్కల మధ్య గాలి, వెలుతురు ధారాళంగా ప్రసరించేలా చూడండి.";
+      textHi = "मक्का में पत्ती झुलसा रोग नियंत्रण के लिए: लंबे भूरे धब्बे दिखते ही मैंकोजेब (2.5 ग्राम/लीटर) या नीम तेल का छिड़काव करें। पौधों के बीच उचित दूरी रखें।";
+    } else if (q.includes('rain') || q.includes('water') || q.includes('వర్షం') || q.includes('बारिश') || q.includes('నీరు')) {
+      textEn = "If rain is forecast today, postpone all chemical foliar spraying and surface irrigation. Rain wash-off will waste chemical investments. Ensure field drainage channels are clear of debris.";
+      textTe = "నేడు వర్ష సూచన ఉన్నందున ఎలాంటి రసాయన పిచికారీలు మరియు నీటిపారుదల చేపట్టవద్దు. వర్షపు నీటికి మందు కొట్టుకుపోతుంది. పొలంలో వర్షపు నీరు నిల్వ ఉండకుండా మురుగు కాలువలను సరిచేయండి.";
+      textHi = "यदि आज बारिश की संभावना है तो सभी प्रकार के कीटनाशक छिड़काव और सिंचाई स्थगित रखें। बारिश से दवा धुल जाएगी। खेत में जल निकासी की व्यवस्था दुरुस्त करें।";
+    } else if (q.includes('fertilizer') || q.includes('urea') || q.includes('dap') || q.includes('npk') || q.includes('ఎరువు') || q.includes('खाद')) {
+      textEn = "Balanced fertilization: During vegetative stage, apply balanced 19:19:19 NPK (4 g/L foliar). During flowering and fruit setting, switch to 0:52:34 (5 g/L) + Boron (1 g/L) to prevent flower drop.";
+      textTe = "సమతుల్య ఎరువుల యాజమాన్యం: పైరు శాఖాభివృద్ధి దశలో 19:19:19 నీటిలో కరిగే ఎరువు (4 గ్రా/లీ) పిచికారీ చేయండి. పూత, పిందె దశలో పూత రాలకుండా 0:52:34 (5 గ్రా/లీ) + బోరాన్ (1 గ్రా/లీ) స్ప్రే చేయండి.";
+      textHi = "संतुलित पोषण प्रबंधन: वानस्पतिक वृद्धि अवस्था में 19:19:19 (4 ग्राम/लीटर) का पर्ण छिड़काव करें। फूल व फल बनते समय 0:52:34 (5 ग्राम/लीटर) + बोरॉन (1 ग्राम/लीटर) का छिड़काव करें।";
+    } else {
+      textEn = `Regarding your query "${message}": Inspect leaf undersides for sucking pests and maintain steady soil moisture. If you notice specific spotting or discoloration, snap a photo in AI Plant Doctor for instant recovery advice!`;
+      textTe = `మీ ప్రశ్న "${message}" పై సలహా: ఆకుల అడుగు భాగాన్ని పరిశీలించి పురుగులు లేవని నిర్ధారించుకోండి మరియు నేలలో తేమను నిలకడగా ఉంచండి. ఆకులపై మచ్చలు లేదా ముడతలు ఉంటే AI ప్లాంట్ డాక్టర్‌లో ఫోటో తీసి పరిశీలించండి!`;
+      textHi = `आपके सवाल "${message}" पर सलाह: पत्तियों की निचली सतह पर रस चूसक कीटों की जांच करें और खेत में उचित नमी बनाए रखें। यदि पत्तियों पर धब्बे हैं तो AI प्लांट डॉक्टर में फोटो खींचकर सटीक इलाज पाएं!`;
+    }
+
+    return res.json({ textEn, textTe, textHi });
+  } catch (err) {
+    console.error('Chat endpoint error:', err);
+    res.status(500).json({ error: 'Failed to process chat query' });
+  }
+});
 
 // Mount Vite or static server
 async function startServer() {

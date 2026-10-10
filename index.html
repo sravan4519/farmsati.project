@@ -2139,7 +2139,33 @@
       document.documentElement.lang = newLang;
       document.body.classList.remove('lang-en', 'lang-te', 'lang-hi');
       document.body.classList.add(`lang-${newLang}`);
+
+      // Automatically translate AI Assistant chat history responses to the selected language
+      if (typeof chatHistory !== 'undefined' && Array.isArray(chatHistory)) {
+        chatHistory.forEach(msg => {
+          if (msg.sender === 'bot') {
+            if (!msg.textTe || !msg.textHi || !msg.textEn) {
+              const multi = getLocalMultiLingualChatResponse(msg.text || '');
+              if (!msg.textEn) msg.textEn = multi.textEn || msg.text;
+              if (!msg.textTe) msg.textTe = multi.textTe || msg.text;
+              if (!msg.textHi) msg.textHi = multi.textHi || msg.text;
+            }
+            if (newLang === 'te') {
+              msg.text = msg.textTe || msg.text;
+            } else if (newLang === 'hi') {
+              msg.text = msg.textHi || msg.text;
+            } else {
+              msg.text = msg.textEn || msg.text;
+            }
+          }
+        });
+      }
+
       initMainApp();
+      if (STATE.currentTab === 'assistant') {
+        const vc = document.getElementById('view-container');
+        if (vc) renderAssistantView(vc);
+      }
       showToast(newLang === 'en' ? 'Language set to English' : (newLang === 'hi' ? 'भाषा हिन्दी में सेट की गई' : 'భాష తెలుగులోకి మార్చబడింది'));
     }
 
@@ -2285,7 +2311,7 @@
       }
     }
 
-    function playStreamedTts(fullText, langCode = 'te') {
+    function playStreamedTts(fullText, langCode = 'te', allowFull = true) {
       try {
         stopAllAudioAndSpeech();
         const thisSessionId = ++currentTtsSessionId;
@@ -2293,7 +2319,7 @@
         const clean = decodeURIComponent(fullText).replace(/[*#_`]/g, ' ').replace(/\s+/g, ' ').trim();
         if (!clean) return;
 
-        // Break text into short readable sentences, capped at 2 punchy sentences so it never drones on!
+        // Break text into short readable sentences for audio streaming
         const parts = clean.match(/[^.!?।\n]+[.!?।\n]*/g) || [clean];
         const chunks = [];
         let current = '';
@@ -2306,12 +2332,11 @@
           }
         }
         if (current.trim()) chunks.push(current.trim());
-        const activeChunks = chunks.slice(0, 2);
-
+        const activeChunks = allowFull ? chunks : chunks.slice(0, 5);
         let idx = 0;
+
         function playNext() {
           if (thisSessionId !== currentTtsSessionId) return; // Aborted by user
-
           if (idx >= activeChunks.length) {
             window.currentPlayingAudio = null;
             if (typeof twoWayVoiceState !== 'undefined') twoWayVoiceState.isSpeaking = false;
@@ -2320,7 +2345,7 @@
           }
 
           const chunk = activeChunks[idx++];
-          const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${langCode}&client=tw-ob&q=${encodeURIComponent(chunk)}`;
+          const url = `/api/tts?lang=${encodeURIComponent(langCode)}&text=${encodeURIComponent(chunk)}`;
           const audio = new Audio(url);
           window.currentPlayingAudio = audio;
 
@@ -2332,13 +2357,13 @@
           audio.onerror = () => {
             if (thisSessionId !== currentTtsSessionId) return;
             window.currentPlayingAudio = null;
-            fallbackSpeechSynth(clean, langCode, thisSessionId);
+            fallbackSpeechSynth(clean, langCode, thisSessionId, allowFull);
           };
 
           audio.play().catch(err => {
             if (thisSessionId !== currentTtsSessionId) return;
             window.currentPlayingAudio = null;
-            fallbackSpeechSynth(clean, langCode, thisSessionId);
+            fallbackSpeechSynth(clean, langCode, thisSessionId, allowFull);
           });
         }
 
@@ -2346,11 +2371,11 @@
         updateVoiceAssistantVisualState(false, true);
         playNext();
       } catch (e) {
-        fallbackSpeechSynth(fullText, langCode, currentTtsSessionId);
+        fallbackSpeechSynth(fullText, langCode, currentTtsSessionId, allowFull);
       }
     }
 
-    function fallbackSpeechSynth(text, targetLang, sessionId) {
+    function fallbackSpeechSynth(text, targetLang, sessionId, allowFull = true) {
       if (!('speechSynthesis' in window)) return;
       if (sessionId && sessionId !== currentTtsSessionId) return;
 
@@ -2359,12 +2384,12 @@
         const clean = decodeURIComponent(text).replace(/[*#_`]/g, '').trim();
         if (!clean) return;
 
-        // Keep it concise: first 150 characters max so speech is snappy
-        const shortClean = clean.length > 180 ? clean.slice(0, 175) + '...' : clean;
+        // Allow complete speech for important farmer advisories, pest radar, and prescriptions
+        const speechText = (allowFull || clean.length <= 400) ? clean : clean.slice(0, 390) + '...';
 
         setTimeout(() => {
           if (sessionId && sessionId !== currentTtsSessionId) return;
-          const utterance = new SpeechSynthesisUtterance(shortClean);
+          const utterance = new SpeechSynthesisUtterance(speechText);
           utterance.rate = 0.95;
           utterance.pitch = 1.0;
           if (targetLang === 'hi') utterance.lang = 'hi-IN';
@@ -2373,7 +2398,17 @@
 
           const voices = availableVoices.length ? availableVoices : (window.speechSynthesis.getVoices() || []);
           const found = voices.find(v => v.lang === utterance.lang || v.lang.startsWith(utterance.lang.slice(0, 2)));
-          if (found) utterance.voice = found;
+          if (found) {
+            utterance.voice = found;
+          } else if (targetLang === 'te' || targetLang === 'hi') {
+            const indicVoice = voices.find(v => v.lang && (v.lang.startsWith('te') || v.lang.startsWith('hi') || v.lang.startsWith('mr') || v.lang.startsWith('bn')));
+            if (indicVoice) {
+              utterance.voice = indicVoice;
+            } else {
+              console.warn("No native " + targetLang + " voice found in browser speech synthesis; preventing English voice fallback.");
+              return;
+            }
+          }
 
           utterance.onstart = () => {
             if (typeof twoWayVoiceState !== 'undefined') twoWayVoiceState.isSpeaking = true;
@@ -2401,7 +2436,7 @@
       }
     }
 
-    function speakText(text, targetLang = STATE.lang) {
+    function speakText(text, targetLang = STATE.lang, allowFull = true) {
       if (!text) return;
       // ALWAYS pause microphone so audio does NOT feed back into mic!
       stopVoiceListening();
@@ -2421,31 +2456,18 @@
           effLang = 'hi';
         }
 
-        // Check if device has native voice
-        const voices = availableVoices.length ? availableVoices : (window.speechSynthesis ? window.speechSynthesis.getVoices() : []);
-        const hasNativeTe = voices.some(v => (v.lang && (v.lang.toLowerCase() === 'te-in' || v.lang.toLowerCase().startsWith('te'))) || (v.name && v.name.toLowerCase().includes('telugu')));
-        const hasNativeHi = voices.some(v => (v.lang && (v.lang.toLowerCase() === 'hi-in' || v.lang.toLowerCase().startsWith('hi'))) || (v.name && v.name.toLowerCase().includes('hindi')));
-
         if (effLang === 'te') {
-          if (hasNativeTe) {
-            fallbackSpeechSynth(clean, 'te', thisSession);
-          } else {
-            playStreamedTts(clean, 'te');
-          }
+          playStreamedTts(clean, 'te', allowFull);
           return;
         }
 
         if (effLang === 'hi') {
-          if (hasNativeHi) {
-            fallbackSpeechSynth(clean, 'hi', thisSession);
-          } else {
-            playStreamedTts(clean, 'hi');
-          }
+          playStreamedTts(clean, 'hi', allowFull);
           return;
         }
 
         // English
-        fallbackSpeechSynth(clean, 'en', thisSession);
+        fallbackSpeechSynth(clean, 'en', thisSession, allowFull);
       } catch (err) {
         console.warn('speakText error:', err);
       }
@@ -5593,23 +5615,28 @@
               <div class="space-y-6">
                 ${doctorState.analysisResult.isPlant === false ? `
                   <!-- Non-Plant Subject Guardrail Card -->
-                  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-amber-50/90 border-2 border-amber-300 shadow-xs">
-                    <div class="flex items-center space-x-4">
-                      <img src="${doctorState.uploadedImage}" class="w-20 h-20 rounded-xl object-cover border-2 border-amber-400 shadow-sm" />
-                      <div>
-                        <div class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${doctorState.analysisResult.detectedSubject && (doctorState.analysisResult.detectedSubject.includes('Human') || doctorState.analysisResult.detectedSubject.includes('Person')) ? 'bg-rose-600 text-white' : 'bg-amber-600 text-white'} uppercase tracking-wider mb-1">
-                          <i data-lucide="alert-triangle" class="w-3 h-3 mr-1"></i>
-                          <span>${doctorState.analysisResult.detectedSubject && (doctorState.analysisResult.detectedSubject.includes('Human') || doctorState.analysisResult.detectedSubject.includes('Person')) ? 'HUMAN / PERSON DETECTED' : 'NON-PLANT DETECTED'}</span>
+                  <div class="p-6 rounded-3xl bg-rose-50/95 border-2 border-rose-300 shadow-md space-y-4">
+                    <div class="flex flex-col sm:flex-row items-center gap-4">
+                      <img src="${doctorState.uploadedImage}" class="w-24 h-24 rounded-2xl object-cover border-2 border-rose-400 shadow-sm shrink-0" />
+                      <div class="flex-1 text-center sm:text-left space-y-2">
+                        <!-- ALERT BADGE -->
+                        <div class="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-xs font-black bg-rose-600 text-white shadow-sm tracking-wide">
+                          <i data-lucide="alert-octagon" class="w-4 h-4 shrink-0"></i>
+                          <span>⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.</span>
                         </div>
-                        <h3 class="text-lg font-bold text-slate-900">${doctorState.analysisResult.issue}</h3>
-                        <p class="text-xs text-amber-900 font-medium">${doctorState.analysisResult.subDiagnosis || doctorState.analysisResult.detectedSubject}</p>
+                        <h3 class="text-base sm:text-lg font-black text-slate-900 leading-snug">
+                          ${loc("పంట లేదా ఆకు భాగం గుర్తించబడలేదు", "फसल या पत्ती की पहचान नहीं हुई", "No Agricultural Crop Foliage Detected")}
+                        </h3>
+                        <p class="text-xs text-rose-800 font-medium leading-relaxed">
+                          ${loc("దయచేసి మానవ ముఖం, శరీరం, మేజా, బూట్లు లేదా జంతువులు కాకుండా మొక్క ఆకు, కాండం లేదా పువ్వు యొక్క స్పష్టమైన ఫోటోను అప్‌లోడ్ చేయండి.", "कृपया चेहरे, मेज, जूते या पालतू जानवरों के स्थान पर पौधे की पत्ती, तने या फूल की स्पष्ट फोटो लें।", "Human face, body, indoor desk, shoes, animals, or non-plant objects detected. FarmSathi AI Doctor evaluates live botanical crops only.")}
+                        </p>
                       </div>
-                    </div>
-                    <div class="flex space-x-2">
-                      <button onclick="resetDoctor()" class="py-2.5 px-4 bg-forest-600 hover:bg-forest-700 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center space-x-1.5">
-                        <i data-lucide="camera" class="w-3.5 h-3.5"></i>
-                        <span>Upload Plant Leaf</span>
-                      </button>
+                      <div class="shrink-0">
+                        <button onclick="resetDoctor()" class="py-3 px-5 bg-forest-700 hover:bg-forest-800 text-white text-xs font-bold rounded-2xl shadow-md shadow-forest-800/25 transition flex items-center space-x-2">
+                          <i data-lucide="camera" class="w-4 h-4"></i>
+                          <span>${loc("ఆకు ఫోటో తీయండి", "पत्ती की फोटो लें", "Snap Plant Leaf")}</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -6283,22 +6310,24 @@
             const skinRatio = skinCount / total;
             const neutralRatio = neutralCount / total;
 
-            // Detection Rule 1: Real Person / Human Portrait
-            if (skinRatio > 0.12 && plantTissueRatio < 0.08) {
+            // Detection Rule 1: Human face, body, skin portrait guardrail
+            if (skinRatio > 0.08 || (skinRatio > 0.04 && plantTissueRatio < 0.15)) {
               resolve({
                 isPlant: false,
-                subject: 'Person / Human Portrait',
-                reason: 'Human skin tones and portrait features were detected without agricultural crop foliage. FarmSathi AI Doctor is specialized exclusively for plant health.'
+                subject: 'Human / Person Detected',
+                alertBadge: '⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.',
+                reason: '⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.'
               });
               return;
             }
 
-            // Detection Rule 2: Completely non-plant inanimate object
-            if (plantTissueRatio < 0.05 && skinRatio < 0.06 && neutralRatio > 0.45) {
+            // Detection Rule 2: Completely non-plant object (indoor desk, shoes, animals, neutral furniture/floors)
+            if (plantTissueRatio < 0.12) {
               resolve({
                 isPlant: false,
                 subject: 'Non-Plant / Ineligible Image',
-                reason: 'No recognizable plant leaves, stems, or crop foliage detected.'
+                alertBadge: '⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.',
+                reason: '⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.'
               });
               return;
             }
@@ -6746,13 +6775,27 @@
           if (apiRes.ok) {
             const result = await apiRes.json();
             doctorState.isAnalyzing = false;
+            if (result.isPlant === false || (result.issue && result.issue.includes("No crop foliage"))) {
+              doctorState.analysisResult = {
+                ...result,
+                isPlant: false,
+                issue: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+                alertBadge: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+                subDiagnosis: "No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+                explanation: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+                medicines: { organic: [], agricultural: [], schedule: [] },
+                causes: [],
+                toCheck: [],
+                toDo: [],
+                notToDo: []
+              };
+              renderDoctorView(document.getElementById('view-container'));
+              showToast("⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.", "error");
+              return;
+            }
             doctorState.analysisResult = result;
             renderDoctorView(document.getElementById('view-container'));
-            if (result.isPlant === false) {
-              showToast("⚠️ " + (result.detectedSubject || "Non-Plant") + " detected! Please upload a crop leaf.", "error");
-            } else {
-              showToast("✅ " + (result.cropName || "Crop") + " diagnosed & recovery medicines prescribed!");
-            }
+            showToast("✅ " + (result.cropName || "Crop") + " diagnosed & recovery medicines prescribed!");
             return;
           }
         } catch (err) {
@@ -6772,9 +6815,10 @@
           doctorState.analysisResult = {
             isPlant: false,
             detectedSubject: check.subject,
-            issue: "Non-Plant Subject Detected",
-            subDiagnosis: check.subject + " detected instead of agricultural crop foliage",
-            explanation: check.reason,
+            issue: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+            alertBadge: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+            subDiagnosis: "No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
+            explanation: "⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.",
             causes: [],
             medicines: { organic: [], agricultural: [], schedule: [] },
             toCheck: [],
@@ -6782,7 +6826,7 @@
             notToDo: []
           };
           renderDoctorView(document.getElementById('view-container'));
-          showToast("⚠️ " + check.subject + " detected! Please upload a plant leaf.", "error");
+          showToast("⚠️ No crop foliage detected. Please snap a clear photo of the leaf, stem, or flower.", "error");
           return;
         }
 
@@ -7037,6 +7081,7 @@
       analyzing: false,
       lastResult: null,
       isSpeaking: false,
+      prescriptionAudioPlaying: false
     };
 
     function openPlantTracker(plantId) {
@@ -7276,16 +7321,521 @@
       window.speechSynthesis.speak(utterance);
     }
 
-    function updateGrowthSlider(val) {
-      const container = document.getElementById('growth-before-container');
-      const handle = document.getElementById('growth-slider-handle');
-      const beforeImg = document.getElementById('growth-before-img');
-      const pct = Math.max(1, Math.min(99, parseFloat(val) || 50));
-      if (container) container.style.width = pct + '%';
-      if (handle) handle.style.left = pct + '%';
-      if (beforeImg) {
-        beforeImg.style.width = (10000 / pct) + '%';
+    let tankMixState = {
+      chem1: 'imidacloprid',
+      chem2: 'mancozeb'
+    };
+
+    const TANK_MIX_CHEMICALS = [
+      { id: 'imidacloprid', name: 'Imidacloprid 17.8% SL', group: 'Insecticide (Systemic Neonicotinoid)' },
+      { id: 'mancozeb', name: 'Mancozeb 75% WP', group: 'Fungicide (Contact Dithiocarbamate)' },
+      { id: 'chlorpyrifos', name: 'Chlorpyrifos 20% EC', group: 'Insecticide (Organophosphate)' },
+      { id: 'copper_oxychloride', name: 'Copper Oxychloride 50% WP (Blitox)', group: 'Fungicide (Inorganic Copper)' },
+      { id: 'carbendazim', name: 'Carbendazim 50% WP', group: 'Fungicide (Systemic Benzimidazole)' },
+      { id: 'chlorantraniliprole', name: 'Chlorantraniliprole 18.5% SC (Coragen)', group: 'Insecticide (Diamide)' },
+      { id: 'hexaconazole', name: 'Hexaconazole 5% SC / Propiconazole', group: 'Fungicide (Systemic Triazole)' },
+      { id: 'neem_oil', name: 'Neem Oil 10,000 ppm (Azadirachtin)', group: 'Botanical Bio-Pesticide' },
+      { id: 'lime_sulphur', name: 'Wettable Sulphur 80% WDG / Lime Sulphur', group: 'Fungicide & Acaricide (Sulphur)' },
+      { id: 'npk_19_19_19', name: '19:19:19 Water Soluble NPK', group: 'Foliar Nutrient Fertilizer' },
+      { id: 'calcium_nitrate', name: 'Calcium Nitrate (Water Soluble)', group: 'Secondary Nutrient (Ca + N)' },
+      { id: 'mop_0_52_34', name: '0:52:34 Mono Potassium Phosphate', group: 'PK Foliar Fertilizer' },
+      { id: 'potassium_nitrate', name: '13:00:45 Potassium Nitrate', group: 'NK Foliar Fertilizer' },
+      { id: 'boron_20', name: 'Boron 20% (Disodium Octaborate)', group: 'Micronutrient' },
+      { id: 'spinosad', name: 'Spinosad 45% SC', group: 'Bio-Insecticide (Spinosyn)' }
+    ];
+
+    function setTankMixChem(slot, val) {
+      if (slot === 1) tankMixState.chem1 = val;
+      if (slot === 2) tankMixState.chem2 = val;
+      renderCurrentView();
+    }
+
+    function getTankMixCompatibility(c1Id, c2Id) {
+      if (c1Id === c2Id) {
+        return {
+          status: 'info',
+          badge: loc('ℹ️ ఒకే రసాయనం ఎంచుకోబడింది', 'ℹ️ एक ही रसायन चयनित', 'ℹ️ Same Chemical Selected'),
+          badgeClass: 'bg-slate-50 border-slate-300',
+          title: loc('దయచేసి 2 విభిన్న రసాయనాలను ఎంచుకోండి', 'कृपया 2 अलग-अलग रसायन चुनें', 'Select Two Distinct Agrochemicals'),
+          details: loc('ట్యాంక్-మిక్స్ అనుకూలతను తనిఖీ చేయడానికి వేర్వేరు క్రిమిసంహారక, శిలీంద్రనాశక లేదా ఎరువులను ఎంచుకోండి.', 'टैंक-मिक्स अनुकूलता जांचने के लिए अलग कीटनाशक, फफूंदनाशी या खाद चुनें।', 'Choose two distinct agrochemicals from the dropdowns above to verify whether they can be safely combined in the knapsack tank.'),
+          precautions: loc('స్ప్రే చేసే ముందు ఎల్లప్పుడూ స్వచ్ఛమైన నీటిని వాడండి (pH 6.0–7.0).', 'छिड़काव से पहले हमेशा साफ पानी का उपयोग करें (pH 6.0–7.0)।', 'Always use clean tube-well water with pH 6.0–7.0 for field sprays.')
+        };
       }
+
+      const pair = [c1Id, c2Id].sort().join('+');
+
+      // DANGEROUS INCOMPATIBILITIES (RED)
+      if (pair.includes('copper_oxychloride') && pair.includes('chlorpyrifos')) {
+        return {
+          status: 'danger',
+          badge: loc('🔴 ప్రమాదకరం - కలపవద్దు!', '🔴 खतरनाक - न मिलाएं!', '🔴 DANGEROUS - DO NOT MIX!'),
+          badgeClass: 'bg-rose-50 border-rose-300 ring-2 ring-rose-400/30',
+          title: loc('క్షార ప్రతిచర్య & ఆకుల కాలిన గాయాల ముప్పు (Phytotoxicity)', 'क्षारीय अभिक्रिया व पत्तियों के जलने का खतरा (Phytotoxicity)', 'Alkaline Hydrolysis & Severe Leaf Scorch Hazard'),
+          details: loc('కాపర్ ఆక్సిక్లోరైడ్ యొక్క అధిక క్షార గుణం క్లోర్‌పైరిఫాస్ అణువులను క్షీణింపజేస్తుంది. క్రిమిసంహారక శక్తి నశిస్తుంది మరియు పంట ఆకులు తీవ్రంగా కాలిపోతాయి.', 'कॉपर ऑक्सीक्लोराइड की क्षारीय प्रकृति क्लोरपायरीफॉस के अणुओं को नष्ट कर देती है। कीटनाशक प्रभाव खत्म हो जाता है और पत्तियां झुलस जाती हैं।', 'Copper Oxychloride hydrolyzes and rapidly breaks down organophosphate molecules. This causes total loss of insecticidal potency and produces harsh leaf chemical scorch (phytotoxicity).'),
+          precautions: loc('వీటిని కలపవద్దు. కాపర్ మరియు క్లోర్‌పైరిఫాస్ మధ్య కనీసం 5 రోజుల వ్యవధి పాటించండి.', 'इन्हें न मिलाएं। कॉपर और क्लोरपायरीफॉस के छिड़काव में कम से कम 5 दिन का अंतर रखें।', 'Do NOT tank mix. Spray Copper and Chlorpyrifos separately with at least a 5-day interval between applications.')
+        };
+      }
+
+      if (pair.includes('lime_sulphur') && pair.includes('neem_oil')) {
+        return {
+          status: 'danger',
+          badge: loc('🔴 ప్రమాదకరం - కలపవద్దు!', '🔴 खतरनाक - न मिलाएं!', '🔴 DANGEROUS - DO NOT MIX!'),
+          badgeClass: 'bg-rose-50 border-rose-300 ring-2 ring-rose-400/30',
+          title: loc('సల్ఫర్ + నూనె విషతుల్య కలయిక (తీవ్రమైన ఆకురాల్పు)', 'सल्फर + तेल विषाक्त मिश्रण (पत्तियों का भारी झुलसाव)', 'Severe Phytotoxicity & Complete Defoliation Risk'),
+          details: loc('సల్ఫర్ మరియు నూనె కలయిక ఎండ వేడిలో తీవ్రమైన ఫైటోటాక్సిసిటీని కలిగిస్తుంది. ఆకులు నల్లబడి రాలిపోతాయి మరియు పూత రాలిపోతుంది.', 'सल्फर और तेल का मिश्रण धूप में गंभीर रासायनिक जलन पैदा करता है। पत्तियां काली पड़कर गिर जाती हैं और फूल झड़ जाते हैं।', 'Sulphur reacting with oils creates a caustic layer on leaf stomata under sunlight, causing rapid cellular scorching and severe leaf fall.'),
+          precautions: loc('సల్ఫర్ మరియు వేపనూనె లేదా ఇతర నూనెల మధ్య కనీసం 14 రోజుల వ్యవధి ఉండాలి.', 'सल्फर और नीम तेल के बीच कम से कम 14 दिनों का अंतर अवश्य रखें।', 'Strictly maintain a minimum 14-day gap between any sulphur fungicide and oil-based foliar sprays.')
+        };
+      }
+
+      if (pair.includes('calcium_nitrate') && (pair.includes('npk_19_19_19') || pair.includes('mop_0_52_34') || pair.includes('lime_sulphur'))) {
+        return {
+          status: 'danger',
+          badge: loc('🔴 ప్రమాదకరం - కలపవద్దు!', '🔴 खतरनाक - न मिलाएं!', '🔴 DANGEROUS - DO NOT MIX!'),
+          badgeClass: 'bg-rose-50 border-rose-300 ring-2 ring-rose-400/30',
+          title: loc('కరగని సున్నపు తెట్టు (నాజిల్‌లు మూసుకుపోతాయి)', 'अघुलनशील जिप्सम अवक्षेप (नोजल जाम)', 'Insoluble Precipitation (Clogs Spray Nozzles)'),
+          details: loc('కాల్షియం మరియు ఫాస్ఫేట్/సల్ఫేట్ కలిసినప్పుడు కరగని కాల్షియం ఫాస్ఫేట్ సున్నపు రాతిలా ఏర్పడుతుంది. నాప్‌సాక్ స్ప్రేయర్ నాజిల్‌లు పూర్తిగా మూసుకుపోతాయి మరియు పోషకాలు మొక్కకు అందవు.', 'कैल्शियम और फॉस्फेट/सल्फेट मिलकर अघुलनशील कैल्शियम फॉस्फेट बन जाते हैं। नैपसैक स्प्रेयर के नोजल पूरी तरह जाम हो जाते हैं।', 'Calcium chemically binds with phosphates and sulphates to form insoluble Calcium Phosphate rock precipitate. It starves the crop of nutrition and clogs knapsack nozzles completely.'),
+          precautions: loc('కాల్షియం నైట్రేట్‌ను ఎల్లప్పుడూ విడిగా మాత్రమే స్ప్రే చేయండి. NPK లేదా సల్ఫర్‌తో కలపవద్దు.', 'कैल्शियम नाइट्रेट का छिड़काव हमेशा अकेले करें। इसे NPK या सल्फर में कभी न मिलाएं।', 'Always apply Calcium Nitrate as a standalone spray or with pure Boron. Never mix with high phosphorus/potash NPK grades.')
+        };
+      }
+
+      if (pair.includes('calcium_nitrate') && pair.includes('copper_oxychloride')) {
+        return {
+          status: 'danger',
+          badge: loc('🔴 ప్రమాదకరం - కలపవద్దు!', '🔴 खतरनाक - न मिलाएं!', '🔴 DANGEROUS - DO NOT MIX!'),
+          badgeClass: 'bg-rose-50 border-rose-300 ring-2 ring-rose-400/30',
+          title: loc('కాల్షియం కాపర్ లవణాల అవక్షేపం', 'कैल्शियम-कॉपर अवक्षेप (पत्तियों पर जलन)', 'Incompatible Salt Precipitation'),
+          details: loc('కాపర్ ఆక్సిక్లోరైడ్ మరియు కాల్షియం నైట్రేట్ కలిపితే తెల్లటి అవక్షేపం ఏర్పడి ఆకులపై మచ్చలు ఏర్పడతాయి.', 'कॉपर और कैल्शियम नाइट्रेट मिलकर कड़ा अवक्षेप बनाते हैं।', 'Precipitates into insoluble calcium copper complexes, causing nozzle choking and leaf spotting.'),
+          precautions: loc('విడిగా స్ప్రే చేయండి.', 'अलग से छिड़कें।', 'Apply separately.')
+        };
+      }
+
+      if (pair.includes('lime_sulphur') && pair.includes('chlorpyrifos')) {
+        return {
+          status: 'danger',
+          badge: loc('🔴 ప్రమాదకరం - కలపవద్దు!', '🔴 खतरनाक - न मिलाएं!', '🔴 DANGEROUS - DO NOT MIX!'),
+          badgeClass: 'bg-rose-50 border-rose-300 ring-2 ring-rose-400/30',
+          title: loc('రసాయన విచ్ఛిన్నం & మందు పనితీరు కోల్పోవడం', 'रासायनिक विघटन (दवा बेअसर)', 'Chemical Breakdown & Efficacy Loss'),
+          details: loc('సల్ఫర్ క్షారత క్లోర్‌పైరిఫాస్‌ను విచ్ఛిన్నం చేస్తుంది.', 'सल्फर की क्षारीयता कीटनाशक को निष्क्रिय कर देती है।', 'Alkaline sulphur degrades organophosphates rapidly.'),
+          precautions: loc('రెండు మందులను విడివిడిగా పిచికారీ చేయండి.', 'दोनों दवाओं का अलग-अलग छिड़काव करें।', 'Apply separately.')
+        };
+      }
+
+      // CAUTION COMBINATIONS (YELLOW)
+      if (pair.includes('neem_oil') && pair.includes('chlorpyrifos')) {
+        return {
+          status: 'caution',
+          badge: loc('🟡 జాగ్రత్త - సగం మోతాదు వాడండి', '🟡 सावधानी - आधी खुराक लें', '🟡 CAUTION - USE HALF DOSE'),
+          badgeClass: 'bg-amber-50 border-amber-300 ring-2 ring-amber-400/30',
+          title: loc('వేసవి ఎండలో ఆకుల అంచులు కాలే అవకాశం', 'कड़ी धूप में पत्तियों के किनारे झुलसने की संभावना', 'Risk of Leaf Margin Burning in High Heat'),
+          details: loc('వేపనూనె ఆకులపై మందు గ్రహింపును పెంచుతుంది. 34°C కంటే ఎక్కువ ఉష్ణోగ్రత ఉన్నప్పుడు సగం మోతాదు మాత్రమే వాడాలి.', 'नीम का तेल कीटनाशक के असर को गहरा करता है। 34 डिग्री से अधिक तापमान में आधी खुराक ही प्रयोग करें।', 'Neem oil acts as a powerful penetrant. In hot midday weather (>34°C), the combination can burn tender leaf margins.'),
+          precautions: loc('సాయంత్రం వేళల్లో మాత్రమే పిచికారీ చేయండి. ముందుగా ఒక కొమ్మపై పరీక్షించండి.', 'केवल शाम के समय छिड़कें। पहले एक शाखा पर परीक्षण करें।', 'Spray only during cool evening hours (after 4:30 PM). Use half regular insecticide dose.')
+        };
+      }
+
+      // SAFE COMBINATIONS (GREEN)
+      if (pair.includes('imidacloprid') && pair.includes('mancozeb')) {
+        return {
+          status: 'safe',
+          badge: loc('🟢 సురక్షితమైన కలయిక (SAFE TO MIX)', '🟢 सुरक्षित मिश्रण (SAFE TO MIX)', '🟢 SAFE TO MIX (SYNERGISTIC)'),
+          badgeClass: 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-400/30',
+          title: loc('తామర పురుగులు + ఆకుమచ్చ తెగులుకు ఉత్తమ కలయిక', 'थ्रिप्स + पत्ती धब्बा रोग हेतु सर्वोत्तम मिश्रण', 'Ideal Mix: Sucking Pests + Fungal Leaf Spot Control'),
+          details: loc('ఇమిడాక్లోప్రిడ్ అంతర్వాహికంగా రసం పీల్చే పురుగులను నివారిస్తుంది; మాంకోజెబ్ స్పర్శ శిలీంద్రనాశకంగా ఆకుమచ్చ, ఎండు తెగుళ్ల నుండి కవచంలా కాపాడుతుంది. రెండూ ఒకే ట్యాంక్‌లో సురక్షితంగా పనిచేస్తాయి.', 'इमिडाक्लोप्रिड रस चूसक कीड़ों (थ्रिप्स/माहू) को मारता है और मैंकोजेब संपर्क फफूंदनाशी के रूप में धब्बा रोग रोकता है। दोनों पूरी तरह अनुकूल हैं।', 'Imidacloprid provides systemic protection against sucking pests (thrips, aphids), while Mancozeb provides a broad-spectrum preventive protective cover against leaf blights. Highly compatible.'),
+          precautions: loc('ముందుగా ఒక బకెట్ నీటిలో మాంకోజెబ్ పొడిని బాగా కలపండి, ఆపై ఇమిడాక్లోప్రిడ్ ద్రవాన్ని కలపండి.', 'पहले बाल्टी में पानी लेकर मैंकोजेब पाउडर का घोल बनाएं, फिर इमिडाक्लोप्रिड तरल डालें।', 'Slurry Mancozeb WP powder in a bucket of water first, then stir in Imidacloprid SL. Spray within 2 hours of mixing.')
+        };
+      }
+
+      if (pair.includes('npk_19_19_19') && pair.includes('neem_oil')) {
+        return {
+          status: 'safe',
+          badge: loc('🟢 సురక్షితమైన కలయిక (SAFE TO MIX)', '🟢 सुरक्षित मिश्रण (SAFE TO MIX)', '🟢 SAFE TO MIX (BIO + NUTRIENT)'),
+          badgeClass: 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-400/30',
+          title: loc('ఆకుల పచ్చదనం + సేంద్రీయ పురుగుల వికర్షణ', 'पत्तियों का हरापन + जैविक कीट निवारक', 'Foliar Nutrition + Organic Pest Repellent'),
+          details: loc('19:19:19 ఎరువు ఆకులకు తక్షణ పోషకాలను అందిస్తుంది; వేపనూనె ఆకు తొలిచే పురుగులను, తెల్లదోమలను సహజంగా నివారిస్తుంది.', '19:19:19 खाद पत्तियों को तुरंत पोषण देती है और नीम तेल कीटों को प्राकृतिक रूप से दूर रखता है।', 'Balanced 19:19:19 foliar feed revitalizes vegetative chlorophyll synthesis while neem oil deters leaf miners and sucking insects naturally.'),
+          precautions: loc('నూనె నీటిలో బాగా కలవడానికి కొన్ని చుక్కల తేలికపాటి సబ్బు నీరు లేదా స్ప్రెడర్ జోడించండి.', 'तेल को पानी में घोलने के लिए कुछ बूंदें माइल्ड लिक्विड सोप या स्टिकर मिलाएं।', 'Add 1 ml/L organic sticker/spreader to achieve a uniform milky emulsion in the knapsack tank.')
+        };
+      }
+
+      if (pair.includes('chlorantraniliprole') && pair.includes('hexaconazole')) {
+        return {
+          status: 'safe',
+          badge: loc('🟢 సురక్షితమైన కలయిక (SAFE TO MIX)', '🟢 सुरक्षित मिश्रण (SAFE TO MIX)', '🟢 SAFE TO MIX (PREMIUM DUAL SHIELD)'),
+          badgeClass: 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-400/30',
+          title: loc('కాయతొలుచు పురుగు + కుళ్ళు తెగుళ్ల నివారణ', 'फल छेदक / तना छेदक + शीथ ब्लाइट सुरक्षा', 'Borer Eradication + Sheath Blight / Rust Shield'),
+          details: loc('కోరాజెన్ (క్లోరాంట్రానిలిప్రోల్) మరియు హెక్సాకోనాజోల్ కలిపి పిచికారీ చేయడం వల్ల కాండం తొలిచే పురుగులు మరియు కుళ్ళు తెగుళ్ళు రెండూ ఒకేసారి అదుపులోకి వస్తాయి.', 'कोराजन और हेक्साकोनाजोल का मिश्रण तना छेदक, फल छेदक व फफूंद जनित रोगों पर अचूक असर करता है।', 'Chlorantraniliprole stops caterpillar muscle contraction while Hexaconazole halts ergosterol synthesis in fungi. Zero antagonism.'),
+          precautions: loc('శుభ్రమైన నీటిలో క్రమంగా కలపండి. నాజిల్‌ను బాగా కదిలించండి.', 'साफ पानी में घोलें और टैंक को हिलाते रहें।', 'Pre-dissolve in separate bucket before pouring into knapsack barrel.')
+        };
+      }
+
+      if (pair.includes('calcium_nitrate') && pair.includes('boron_20')) {
+        return {
+          status: 'safe',
+          badge: loc('🟢 అత్యుత్తమ సినర్జిస్టిక్ కలయిక (PERFECT SYNERGY)', '🟢 सर्वोत्तम संयोजन (PERFECT SYNERGY)', '🟢 PERFECT SYNERGY (FLOWER & FRUIT SET)'),
+          badgeClass: 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-400/30',
+          title: loc('పూత రాలడం నివారణ & కాయల సైజు పెరుగుదల', 'फूल झड़ने से रोकें व फलों का ठोस विकास', 'Blossom Retention & Fruit End Rot Prevention'),
+          details: loc('కాల్షియం మరియు బోరాన్ ఒకదానికొకటి తోడ్పడతాయి. బోరాన్ కణాలలో కాల్షియం ప్రసరణను వేగవంతం చేస్తుంది. పూత రాలకుండా, కాయలు పగలకుండా నివారిస్తుంది.', 'कैल्शियम और बोरॉन एक-दूसरे के पूरक हैं। यह फूलों को झड़ने से रोकता है और फल फटने की समस्या खत्म करता है।', 'Calcium and Boron have high synergistic physiological uptake. Boron assists calcium translocation into cell walls, stopping flower drop and fruit cracking.'),
+          precautions: loc('పూత మరియు పిందె దశలో ఉదయం వేళ పిచికారీ చేయండి.', 'फूल और फल बनने की अवस्था में सुबह छिड़कें।', 'Spray during 50% flowering and early fruit-setting stages for best yields.')
+        };
+      }
+
+      // DEFAULT COMPATIBLE (GREEN)
+      return {
+        status: 'safe',
+        badge: loc('🟢 అనుకూలమైనది (COMPATIBLE PREMIX)', '🟢 अनुकूल मिश्रण (COMPATIBLE)', '🟢 COMPATIBLE - STANDARD PREMIX'),
+        badgeClass: 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-400/30',
+        title: loc('రసాయన వైరుధ్యం లేదు - సురక్షితంగా కలపవచ్చు', 'कोई रासायनिक विरोध नहीं - सुरक्षित मिश्रण', 'No Known Antagonism - Safe for Tank Mix'),
+        details: loc('ఈ రెండు రసాయనాల మధ్య ప్రతికూల చర్యలు నివేదించబడలేదు. నాప్‌సాక్ ట్యాంక్‌లో సురక్షితంగా పిచికారీ చేయవచ్చు.', 'इन दोनों रसायनों के बीच कोई हानिकारक प्रतिक्रिया नहीं पाई गई है।', 'Standard tank-mix compatible. No molecular degradation or precipitation reported under neutral water conditions.'),
+        precautions: loc('W-A-L-E పద్ధతిని పాటించండి: ముందుగా పొడి (WP), తర్వాత ద్రవం (SC/SL), చివరగా తైల ద్రావణం (EC).', 'W-A-L-E नियम: पहले पाउडर (WP), फिर लिक्विड (SC/SL), अंत में इमल्शन (EC) मिलाएं।', 'Follow the W-A-L-E mixing order: 1. Wettable Powders (WP) first, 2. Agitate, 3. Liquid Flowables (SC/SL), 4. Emulsifiable Concentrates (EC) last.')
+      };
+    }
+
+    function getTodayCoreAction(plant, day) {
+      const pName = (plant && plant.name) ? plant.name : 'Crop';
+      const pType = (plant && plant.type) ? plant.type : 'Chilli';
+      const nameLower = (pName + ' ' + pType).toLowerCase();
+      const d = Math.max(1, parseInt(day) || 30);
+
+      // Weather Sync
+      const weather = STATE.weather;
+      const wind = (weather && weather.current && typeof weather.current.windSpeed === 'number') ? weather.current.windSpeed : 8;
+      const rainProb = (weather && weather.daily && typeof weather.daily.rainProb === 'number') ? weather.daily.rainProb : 10;
+      const temp = (weather && weather.current && typeof weather.current.temp === 'number') ? weather.current.temp : 29;
+
+      let weatherStatus = 'optimal';
+      let sprayWindow = '';
+      let sprayWindowTe = '';
+      let sprayWindowHi = '';
+      let weatherBadge = '';
+      let weatherBadgeTe = '';
+      let weatherBadgeHi = '';
+
+      if (rainProb >= 40) {
+        weatherStatus = 'rain_warning';
+        weatherBadge = `🌧️ Rain Threat (${rainProb}% Probability) • Postpone Spray`;
+        weatherBadgeTe = `🌧️ వర్ష సూచన (${rainProb}% సంభావ్యత) • పిచికారీ వాయిదా వేయండి`;
+        weatherBadgeHi = `🌧️ बारिश की आशंका (${rainProb}% संभावना) • छिड़काव टालें`;
+        sprayWindow = `Postpone until dry spell. High wash-off risk from ${rainProb}% rain chance.`;
+        sprayWindowTe = `వర్షం ముప్పు (${rainProb}%) ఉన్నందున పిచికారీ వాయిదా వేయండి. మందు వృధా అవుతుంది.`;
+        sprayWindowHi = `बारिश की आशंका (${rainProb}%) के कारण छिड़काव टालें। दवा धुलने का खतरा है।`;
+      } else if (wind >= 18) {
+        weatherStatus = 'wind_warning';
+        weatherBadge = `💨 High Wind (${wind} km/h) • Spray Drift Warning`;
+        weatherBadgeTe = `💨 తీవ్ర గాలి (${wind} km/h) • స్ప్రే డ్రిఫ్ట్ హెచ్చరిక`;
+        weatherBadgeHi = `💨 तेज हवा (${wind} km/h) • बहाव की चेतावनी`;
+        sprayWindow = `Early Dawn: 6:00 AM – 7:30 AM before wind accelerates past 18 km/h.`;
+        sprayWindowTe = `వేకువజామున 6:00 – 7:30 గంటలలోపు (గాలి వేగం తక్కువగా ఉన్నప్పుడు).`;
+        sprayWindowHi = `सुबह 6:00 – 7:30 बजे के बीच (जब हवा शांत हो)।`;
+      } else if (temp >= 35) {
+        weatherStatus = 'heat_warning';
+        weatherBadge = `☀️ High Afternoon Heat (${temp}°C) • Leaf Scorch Hazard`;
+        weatherBadgeTe = `☀️ అధిక ఎండ వేడి (${temp}°C) • ఆకులు కాలే ముప్పు`;
+        weatherBadgeHi = `☀️ तेज धूप व गर्मी (${temp}°C) • पत्तियां झुलसने का खतरा`;
+        sprayWindow = `Evening Only: 4:45 PM – 6:30 PM (Avoid direct midday sunlight).`;
+        sprayWindowTe = `సాయంత్రం 4:45 – 6:30 గంటలకు మాత్రమే (ఎండ వేడి తగ్గిన తర్వాత).`;
+        sprayWindowHi = `केवल शाम 4:45 – 6:30 बजे (धूप ढलने के बाद)।`;
+      } else {
+        weatherStatus = 'optimal';
+        weatherBadge = `🟢 Ideal Spray Conditions (Wind ${wind} km/h • ${temp}°C • Rain ${rainProb}%)`;
+        weatherBadgeTe = `🟢 అనుకూల వాతావరణం (గాలి ${wind} km/h • ${temp}°C • వర్షం ${rainProb}%)`;
+        weatherBadgeHi = `🟢 अनुकूल मौसम (हवा ${wind} km/h • ${temp}°C • बारिश ${rainProb}%)`;
+        sprayWindow = `Morning 6:30 AM – 9:30 AM or Evening 4:30 PM – 6:30 PM`;
+        sprayWindowTe = `ఉదయం 6:30 – 9:30 లేదా సాయంత్రం 4:30 – 6:30`;
+        sprayWindowHi = `सुबह 6:30 – 9:30 बजे या शाम 4:30 – 6:30 बजे`;
+      }
+
+      // Crop Archetype & Growth Stage
+      let cropType = 'general';
+      if (nameLower.includes('chilli') || nameLower.includes('mirchi') || nameLower.includes('pepper')) cropType = 'chilli';
+      else if (nameLower.includes('tomato')) cropType = 'tomato';
+      else if (nameLower.includes('cotton') || nameLower.includes('kapas')) cropType = 'cotton';
+      else if (nameLower.includes('paddy') || nameLower.includes('rice')) cropType = 'paddy';
+      else if (nameLower.includes('groundnut') || nameLower.includes('peanut')) cropType = 'groundnut';
+      else if (nameLower.includes('watermelon') || nameLower.includes('melon')) cropType = 'watermelon';
+      else if (nameLower.includes('rose')) cropType = 'rose';
+
+      let stageName = '';
+      let stageNameTe = '';
+      let stageNameHi = '';
+      let task = '';
+      let taskTe = '';
+      let taskHi = '';
+      let costPerAcre = '';
+      let costPerAcreTe = '';
+      let costPerAcreHi = '';
+      let costBreakdown = '';
+      let costBreakdownTe = '';
+      let costBreakdownHi = '';
+
+      if (cropType === 'chilli') {
+        if (d <= 15) {
+          stageName = 'Nursery & Early Transplanting';
+          stageNameTe = 'నర్సరీ & నాట్లు వేసిన తొలి దశ';
+          stageNameHi = 'नर्सरी व शुरुआती रोपाई अवस्था';
+          task = 'Root Drenching & Establishment: Drench root base with Humic Acid (3 ml/L) + Carbendazim (1 g/L) to prevent damping-off. Keep nursery bed moist without standing water.';
+          taskTe = 'వేరు వ్యవస్థ బలోపేతం & నారు కుళ్ళు నివారణ: హ్యూమిక్ యాసిడ్ (3 మి.లీ/లీ) + కార్బండైజిమ్ (1 గ్రా/లీ) కలిపి మొక్కల మొదళ్ల వద్ద పోయండి. నీరు నిల్వ ఉండకుండా చూసుకోండి.';
+          taskHi = 'जड़ सुरक्षा व सडन रोकथाम: ह्यूमिक एसिड (3 मिली/लीटर) + कार्बेन्डाजिम (1 ग्राम/लीटर) से जड़ों को तर करें। क्यारी में जलभराव न होने दें।';
+          costPerAcre = '₹320 – ₹410 / acre';
+          costPerAcreTe = '₹320 – ₹410 / ఎకరాకు';
+          costPerAcreHi = '₹320 – ₹410 / प्रति एकड़';
+          costBreakdown = 'Fungicide ₹180 + Humic ₹130 + Labor ₹80';
+          costBreakdownTe = 'శిలీంద్రనాశని ₹180 + హ్యూమిక్ ₹130 + కూలీ ₹80';
+          costBreakdownHi = 'दवा ₹180 + ह्यूमिक ₹130 + मजदूरी ₹80';
+        } else if (d <= 35) {
+          stageName = 'Active Vegetative & Canopy Branching';
+          stageNameTe = 'శాఖాభివృద్ధి మరియు కొమ్మల పెరుగుదల దశ';
+          stageNameHi = 'सक्रिय वानस्पतिक व शाखा विकास अवस्था';
+          task = 'Thrips Shield & Branching Booster: Foliar spray Neem Oil 10,000 ppm (2.5 ml/L) + 19:19:19 NPK (4 g/L). Install 15 blue & yellow sticky traps per acre for early thrips detection.';
+          taskTe = 'తామర పురుగుల రక్షణ & శాఖాభివృద్ధి: వేపనూనె 10,000 ppm (2.5 మి.లీ/లీ) + 19:19:19 ఎరువు (4 గ్రా/లీ) పిచికారీ చేయండి. ఎకరాకు 15 నీలం మరియు పసుపు జిగురు అట్టలు అమర్చండి.';
+          taskHi = 'थ्रिप्स नियंत्रण व शाखा वृद्धि: नीम तेल 10,000 ppm (2.5 मिली/लीटर) + 19:19:19 (4 ग्राम/लीटर) का पर्ण छिड़काव करें। प्रति एकड़ 15 नीले व पीले स्टिकी ट्रैप लगाएं।';
+          costPerAcre = '₹490 – ₹620 / acre';
+          costPerAcreTe = '₹490 – ₹620 / ఎకరాకు';
+          costPerAcreHi = '₹490 – ₹620 / प्रति एकड़';
+          costBreakdown = 'Neem Oil ₹220 + 19:19:19 ₹190 + Labor ₹140';
+          costBreakdownTe = 'వేపనూనె ₹220 + 19:19:19 ₹190 + కూలీ ₹140';
+          costBreakdownHi = 'नीम तेल ₹220 + 19:19:19 ₹190 + मजदूरी ₹140';
+        } else if (d <= 60) {
+          stageName = 'Flower Initiation & Bud Setting';
+          stageNameTe = 'పూత దశ & మొగ్గల నిర్మాణం';
+          stageNameHi = 'फूल आने व कलियां बनने की अवस्था';
+          task = 'Flower Drop Prevention: Foliar spray Planofix/NAA (0.25 ml per 4.5 L water) + 0:52:34 (5 g/L). Ensure even soil moisture to prevent blossom shedding.';
+          taskTe = 'పూత రాలడం నివారణ: ప్లానోఫిక్స్ (0.25 మి.లీ / 4.5 లీ నీటికి) + 0:52:34 ఎరువు (5 గ్రా/లీ) పిచికారీ చేయండి. తేమ సమానంగా ఉండేలా చూసుకోండి.';
+          taskHi = 'फूल झड़ने से रोकें: प्लानोफिक्स (0.25 मिली / 4.5 ली पानी) + 0:52:34 (5 ग्राम/लीटर) का छिड़काव करें। खेत में नमी एक समान बनाए रखें।';
+          costPerAcre = '₹540 – ₹690 / acre';
+          costPerAcreTe = '₹540 – ₹690 / ఎకరాకు';
+          costPerAcreHi = '₹540 – ₹690 / प्रति एकड़';
+          costBreakdown = 'Hormone Spray ₹210 + 0:52:34 ₹240 + Labor ₹150';
+          costBreakdownTe = 'హార్మోన్ స్ప్రే ₹210 + 0:52:34 ₹240 + కూలీ ₹150';
+          costBreakdownHi = 'दवा ₹210 + 0:52:34 ₹240 + मजदूरी ₹150';
+        } else {
+          stageName = 'Fruit Sizing, Ripening & Harvest';
+          stageNameTe = 'కాయల సైజు పెరుగుదల & రంగు మారే దశ';
+          stageNameHi = 'फल विकास, पकने व तुड़ाई की अवस्था';
+          task = 'Fruit Rot (Anthracnose) Guard & Red Gloss: Foliar spray Azoxystrobin + Difenoconazole (1 ml/L) + 0:0:50 Potash (5 g/L) for vibrant red color and fruit weight.';
+          taskTe = 'కాయకుళ్ళు (ఆంత్రాక్నోస్) నివారణ & ఎరుపు రంగు: అజాక్సిస్ట్రోబిన్ + డైఫెనోకోనాజోల్ (1 మి.లీ/లీ) + 0:0:50 పొటాష్ (5 గ్రా/లీ) పిచికారీ చేయండి.';
+          taskHi = 'फल सड़न (एंथ्रेक्नोज) सुरक्षा व लाल रंग: एजोक्सीस्ट्रोबिन + डाइफेनोकोनाजोल (1 मिली/लीटर) + 0:0:50 पोटाश (5 ग्राम/लीटर) का छिड़काव करें।';
+          costPerAcre = '₹710 – ₹890 / acre';
+          costPerAcreTe = '₹710 – ₹890 / ఎకరాకు';
+          costPerAcreHi = '₹710 – ₹890 / प्रति एकड़';
+          costBreakdown = 'Systemic Fungicide ₹440 + Potash ₹180 + Labor ₹160';
+          costBreakdownTe = 'శిలీంద్రనాశని ₹440 + పొటాష్ ₹180 + కూలీ ₹160';
+          costBreakdownHi = 'फफूंदनाशी ₹440 + पोटाश ₹180 + मजदूरी ₹160';
+        }
+      } else if (cropType === 'tomato') {
+        if (d <= 15) {
+          stageName = 'Transplanting & Root Anchor';
+          stageNameTe = 'నాట్లు & వేరు నిలదొక్కుకునే దశ';
+          stageNameHi = 'रोपाई व जड़ स्थापना अवस्था';
+          task = 'Transplant shock reduction: Light drench of Trichoderma viride (5 g/L) + starter 19:19:19 (2 g/L) around seedling base.';
+          taskTe = 'నాట్ల ఒత్తిడి నివారణ: ట్రైకోడెర్మా విరిడే (5 గ్రా/లీ) + 19:19:19 (2 గ్రా/లీ) మొదళ్ల వద్ద పోయండి.';
+          taskHi = 'रोपाई का तनाव कम करें: ट्राइकोडर्मा विरिडी (5 ग्राम/लीटर) + 19:19:19 (2 ग्राम/लीटर) जड़ के पास डालें।';
+          costPerAcre = '₹290 – ₹380 / acre';
+          costPerAcreTe = '₹290 – ₹380 / ఎకరాకు';
+          costPerAcreHi = '₹290 – ₹380 / प्रति एकड़';
+          costBreakdown = 'Bio-fungicide ₹160 + Starter NPK ₹90 + Labor ₹80';
+          costBreakdownTe = 'బయో ఫంగిసైడ్ ₹160 + NPK ₹90 + కూలీ ₹80';
+          costBreakdownHi = 'बायो फफूंदनाशी ₹160 + खाद ₹90 + मजदूरी ₹80';
+        } else if (d <= 35) {
+          stageName = 'Staking & Vegetative Pruning';
+          stageNameTe = 'స్టేకింగ్ & పిలకల కత్తిరింపు దశ';
+          stageNameHi = 'सहारा देना (स्टेकिंग) व वानस्पतिक छंटाई';
+          task = 'Staking check & Lower Sucker Pruning: Tie main vine to bamboo stakes or wire. Prune lower suckers touching soil to prevent early blight soil splash.';
+          taskTe = 'స్టేకింగ్ & కింది పిలకల కత్తిరింపు: కాండాన్ని వెదురు బొంగులకు కట్టండి. నేలను తాకే కింది ఆకులను తొలగించి ఎర్లీ బ్లైట్ తెగులును అరికట్టండి.';
+          taskHi = 'सहारा दें व निचली शाखाएं हटाएं: पौधों को बांस से बांधें। मिट्टी को छूने वाली निचली शाखाएं काटें ताकि झुलसा रोग न फैले।';
+          costPerAcre = '₹480 – ₹610 / acre';
+          costPerAcreTe = '₹480 – ₹610 / ఎకరాకు';
+          costPerAcreHi = '₹480 – ₹610 / प्रति एकड़';
+          costBreakdown = 'Tying Twine ₹180 + Mancozeb Spray ₹180 + Labor ₹180';
+          costBreakdownTe = 'దారాలు ₹180 + మాంకోజెబ్ స్ప్రే ₹180 + కూలీ ₹180';
+          costBreakdownHi = 'रस्सी ₹180 + मैंकोजेब स्प्रे ₹180 + मजदूरी ₹180';
+        } else if (d <= 60) {
+          stageName = 'Flowering & Fruit Setting';
+          stageNameTe = 'పూత దశ & పిందె కట్టే దశ';
+          stageNameHi = 'फूल आना व फल बनने की अवस्था';
+          task = 'Blossom End Rot Prevention: Foliar spray Calcium Nitrate (2.5 g/L) + Boron 20% (1 g/L). Regulate evening drip watering evenly.';
+          taskTe = 'కాయ కుళ్ళు నివారణ & పూత రక్షణ: కాల్షియం నైట్రేట్ (2.5 గ్రా/లీ) + బోరాన్ 20% (1 గ్రా/లీ) పిచికారీ చేయండి. సమానంగా డ్రిప్ నీరు ఇవ్వండి.';
+          taskHi = 'ब्लॉसम एंड रॉट से बचाव: कैल्शियम नाइट्रेट (2.5 ग्राम/लीटर) + बोरॉन 20% (1 ग्राम/लीटर) का छिड़काव करें। नमी सामान्य रखें।';
+          costPerAcre = '₹560 – ₹710 / acre';
+          costPerAcreTe = '₹560 – ₹710 / ఎకరాకు';
+          costPerAcreHi = '₹560 – ₹710 / प्रति एकड़';
+          costBreakdown = 'Calcium Boron ₹340 + Foliar Feed ₹120 + Labor ₹140';
+          costBreakdownTe = 'కాల్షియం బోరాన్ ₹340 + ఫోలియర్ ఎరువు ₹120 + కూలీ ₹140';
+          costBreakdownHi = 'कैल्शियम बोरॉन ₹340 + खाद ₹120 + मजदूरी ₹140';
+        } else {
+          stageName = 'Fruit Maturation & Breaker Stage Harvest';
+          stageNameTe = 'కాయ పక్వత & కోత దశ';
+          stageNameHi = 'फल पकने व तुड़ाई की अवस्था';
+          task = 'Fruit Firmness & Borer Shield: Foliar spray 0:0:50 Potash (5 g/L) + Coragen (0.4 ml/L) against fruit borer. Harvest firm breaker-stage fruit in early morning.';
+          taskTe = 'కాయ గట్టిదనం & పురుగు నివారణ: 0:0:50 పొటాష్ (5 గ్రా/లీ) + కోరాజెన్ (0.4 మి.లీ/లీ) పిచికారీ చేయండి. ఉదయపు వేళల్లో కోత కోయండి.';
+          taskHi = 'फल की चमक व छेदक कीट सुरक्षा: 0:0:50 पोटाश (5 ग्राम/लीटर) + कोराजन (0.4 मिली/लीटर) का छिड़काव करें। सुबह के समय तुड़ाई करें।';
+          costPerAcre = '₹680 – ₹820 / acre';
+          costPerAcreTe = '₹680 – ₹820 / ఎకరాకు';
+          costPerAcreHi = '₹680 – ₹820 / प्रति एकड़';
+          costBreakdown = 'Pheromone Traps ₹240 + Foliar K ₹260 + Labor ₹180–₹320';
+          costBreakdownTe = 'ఫెరమోన్ ట్రాప్స్ ₹240 + ఫోలియర్ K ₹260 + కూలీ ₹180–₹320';
+          costBreakdownHi = 'फेरोमोन ट्रैप ₹240 + पोटाश ₹260 + मजदूरी ₹180–₹320';
+        }
+      } else if (cropType === 'cotton') {
+        if (d <= 20) {
+          stageName = 'Emergence & Weed Scouting';
+          stageNameTe = 'మొలక & కలుపు నివారణ దశ';
+          stageNameHi = 'अंकुरण व खरपतवार नियंत्रण अवस्था';
+          task = 'Weed Management & Sucking Pest Scout: Hand hoeing between rows. Inspect leaf undersides for early aphids and jassids.';
+          costPerAcre = '₹390 – ₹480 / acre';
+          costBreakdown = 'Weeding Labor ₹250 + Sticky Traps ₹140';
+        } else if (d <= 45) {
+          stageName = 'Square Formation (Budding)';
+          stageNameTe = 'పూత మొగ్గల (స్క్వేర్స్) దశ';
+          stageNameHi = 'कलियां (स्क्वायर) बनने की अवस्था';
+          task = 'Square Protection: Spray Spinosad (0.3 ml/L) or Neem Oil against spotted bollworm. Top dress Urea (30 kg/acre).';
+          costPerAcre = '₹620 – ₹780 / acre';
+          costBreakdown = 'Bio-spray ₹340 + Urea top-dress ₹140 + Labor ₹140';
+        } else {
+          stageName = 'Boll Development & Maturation';
+          stageNameTe = 'కాయల పెరుగుదల & పత్తి తీసే దశ';
+          stageNameHi = 'टिंडे विकास व चुनाई अवस्था';
+          task = 'Pink Bollworm Defense: Install pheromone traps (5/acre). Foliar spray 13:0:45 (5 g/L) to prevent premature boll shedding.';
+          costPerAcre = '₹680 – ₹820 / acre';
+          costPerAcreTe = '₹680 – ₹820 / ఎకరాకు';
+          costPerAcreHi = '₹680 – ₹820 / प्रति एकड़';
+          costBreakdown = 'Pheromone Traps ₹240 + Foliar K ₹260 + Labor ₹180–₹320';
+          costBreakdownTe = 'ఫెరమోన్ ట్రాప్స్ ₹240 + ఫోలియర్ K ₹260 + కూలీ ₹180–₹320';
+          costBreakdownHi = 'फेरोमोन ट्रैप ₹240 + पोटाश ₹260 + मजदूरी ₹180–₹320';
+        }
+      } else if (cropType === 'paddy') {
+        if (d <= 25) {
+          stageName = 'Active Tillering Stage';
+          stageNameTe = 'పిలకలు పెట్టే దశ';
+          stageNameHi = 'कल्ले फूटने (टिलरिंग) की अवस्था';
+          task = 'Zinc Boost & Top Dressing: Apply Urea (25 kg/acre) + Zinc Sulphate (10 kg/acre). Maintain 2-3 cm standing water.';
+          costPerAcre = '₹420 – ₹510 / acre';
+          costBreakdown = 'Urea ₹160 + Zinc ₹190 + Labor ₹100';
+        } else if (d <= 55) {
+          stageName = 'Panicle Initiation';
+          stageNameTe = 'కంకి పుట్టే దశ';
+          stageNameHi = 'बाली निकलने की अवस्था';
+          task = 'Stem Borer & Sheath Blight Guard: Spray Chlorantraniliprole (0.3 ml/L) + Hexaconazole (2 ml/L). Maintain field moisture.';
+          costPerAcre = '₹580 – ₹720 / acre';
+          costBreakdown = 'Coragen ₹340 + Hexaconazole ₹150 + Labor ₹140';
+        } else {
+          stageName = 'Grain Filling & Dough Stage';
+          stageNameTe = 'గింజ పాలుపోసుకునే & గట్టిపడే దశ';
+          stageNameHi = 'दाना भराव व पकने की अवस्था';
+          task = 'Brown Planthopper (BPH) Scout: Inspect plant bases. Drain field water 10 days before scheduled combine harvest.';
+          costPerAcre = '₹340 – ₹450 / acre';
+          costBreakdown = 'Field Drainage & Scouting ₹200 + Labor ₹150';
+        }
+      } else if (cropType === 'groundnut') {
+        if (d <= 30) {
+          stageName = 'Vegetative & Early Pegging';
+          stageNameTe = 'శాఖాభివృద్ధి & ఊడలు దిగే దశ';
+          stageNameHi = 'वानस्पतिक व पेगिंग अवस्था';
+          task = 'Pegging Protection: Apply Gypsum (200 kg/acre) around root zone. Spray Mancozeb (2 g/L) against Tikka leaf spot.';
+          costPerAcre = '₹480 – ₹620 / acre';
+          costBreakdown = 'Gypsum ₹280 + Mancozeb ₹140 + Labor ₹120';
+        } else {
+          stageName = 'Pod Filling & Shell Maturation';
+          stageNameTe = 'కాయ ఊరే & పక్వత దశ';
+          stageNameHi = 'फली भराव व परिपक्वता अवस्था';
+          task = 'Pod Development: Light irrigation to ease pod swelling. Check inner pod shell color for harvest maturity.';
+          costPerAcre = '₹380 – ₹490 / acre';
+          costBreakdown = 'Light Irrigation & Field Prep ₹220 + Labor ₹160';
+        }
+      } else if (cropType === 'watermelon') {
+        if (d <= 25) {
+          stageName = 'Vine Elongation & Runner Training';
+          stageNameTe = 'తీగ సాగే దశ';
+          stageNameHi = 'बेल फैलाव व शाखा अवस्था';
+          task = 'Runner Guidance & Beetles Guard: Direct trailing vines away from trenches. Spray 19:19:19 (4 g/L) + Neem Oil (2.5 ml/L).';
+          costPerAcre = '₹420 – ₹530 / acre';
+          costBreakdown = 'NPK ₹180 + Neem Oil ₹160 + Labor ₹120';
+        } else {
+          stageName = 'Fruit Expansion & Sugar Setting';
+          stageNameTe = 'కాయల పరిమాణం & తీపి దశ';
+          stageNameHi = 'फल विकास व मिठास अवस्था';
+          task = 'Sugar Concentration: Foliar spray 0:0:50 Potash (5 g/L) + Boron (1 g/L). Taper off watering 6 days before harvest.';
+          costPerAcre = '₹520 – ₹670 / acre';
+          costBreakdown = '0:0:50 ₹260 + Boron ₹120 + Labor ₹150';
+        }
+      } else {
+        if (d <= 25) {
+          stageName = 'Vegetative Growth Stage';
+          stageNameTe = 'శాఖాభివృద్ధి దశ';
+          stageNameHi = 'वानस्पतिक विकास अवस्था';
+          task = 'Balanced Foliar Nutrition: Spray 19:19:19 Water Soluble NPK (4 g/L). Scout undersides of leaves for sucking insects.';
+          costPerAcre = '₹380 – ₹490 / acre';
+          costBreakdown = 'Foliar NPK ₹170 + Bio-spray ₹120 + Labor ₹90';
+        } else {
+          stageName = 'Bud & Fruit Maturation Stage';
+          stageNameTe = 'పూత & కాయల పరిపక్వత దశ';
+          stageNameHi = 'फूल व फल परिपक्वता अवस्था';
+          task = 'Flower & Fruit Retention: Foliar spray Potassium & Micronutrient mix. Maintain steady morning irrigation.';
+          costPerAcre = '₹680 – ₹820 / acre';
+          costPerAcreTe = '₹680 – ₹820 / ఎకరాకు';
+          costPerAcreHi = '₹680 – ₹820 / प्रति एकड़';
+          costBreakdown = 'Pheromone Traps ₹240 + Foliar K ₹260 + Labor ₹180–₹320';
+          costBreakdownTe = 'ఫెరమోన్ ట్రాప్స్ ₹240 + ఫోలియర్ K ₹260 + కూలీ ₹180–₹320';
+          costBreakdownHi = 'फेरोमोन ट्रैप ₹240 + पोटाश ₹260 + मजदूरी ₹180–₹320';
+        }
+      }
+
+      return {
+        stageName,
+        stageNameTe: stageNameTe || stageName,
+        stageNameHi: stageNameHi || stageName,
+        task,
+        taskTe: taskTe || task,
+        taskHi: taskHi || task,
+        sprayWindow,
+        sprayWindowTe: sprayWindowTe || sprayWindow,
+        sprayWindowHi: sprayWindowHi || sprayWindow,
+        weatherStatus,
+        weatherBadge,
+        weatherBadgeTe: weatherBadgeTe || weatherBadge,
+        weatherBadgeHi: weatherBadgeHi || weatherBadge,
+        costPerAcre,
+        costPerAcreTe: costPerAcreTe || costPerAcre,
+        costPerAcreHi: costPerAcreHi || costPerAcre,
+        costBreakdown,
+        costBreakdownTe: costBreakdownTe || costBreakdown,
+        costBreakdownHi: costBreakdownHi || costBreakdown
+      };
+    }
+
+    function togglePrescriptionAudio() {
+      if (trackerState.prescriptionAudioPlaying) {
+        stopAllAudioAndSpeech();
+        trackerState.prescriptionAudioPlaying = false;
+        renderCurrentView();
+        return;
+      }
+
+      const selectedPlant = STATE.plants.find(p => p.id === trackerState.selectedPlantId) || STATE.plants[0] || { name: 'Chilli Crop', type: 'Chilli' };
+      const day = trackerState.dayNumber || 30;
+      const action = getTodayCoreAction(selectedPlant, day);
+      const lang = STATE.lang || 'en';
+
+      let textToSpeak = '';
+      if (lang === 'te') {
+        textToSpeak = `${selectedPlant.name} పంట నేటి కార్యాచరణ, రోజు ${day}. పెరుగుదల దశ: ${action.stageNameTe}. నేటి సిఫార్సు: ${action.taskTe}. అనుకూల పిచికారీ సమయం: ${action.sprayWindowTe}. వాతావరణ పరిస్థితి: ${action.weatherBadgeTe}. ఎకరాకు అంచనా ఖర్చు: ${action.costPerAcreTe}.`;
+      } else if (lang === 'hi') {
+        textToSpeak = `${selectedPlant.name} फसल की आज की कार्य योजना, दिन ${day}। विकास अवस्था: ${action.stageNameHi}। आज का मुख्य कार्य: ${action.taskHi}। छिड़काव का सबसे अच्छा समय: ${action.sprayWindowHi}। मौसम का हाल: ${action.weatherBadgeHi}। प्रति एकड़ अनुमानित लागत: ${action.costPerAcreHi}।`;
+      } else {
+        textToSpeak = `Today's Action Plan for ${selectedPlant.name}, Day ${day}. Growth stage: ${action.stageName}. Next 24-hour task: ${action.task}. Ideal spray window: ${action.sprayWindow}. Weather status: ${action.weatherBadge}. Estimated cost per acre: ${action.costPerAcre}.`;
+      }
+
+      trackerState.prescriptionAudioPlaying = true;
+      renderCurrentView();
+
+      speakText(textToSpeak, lang, true);
+
+      // Auto-reset state when audio playback finishes
+      const checkInterval = setInterval(() => {
+        const isSpeaking = (window.currentPlayingAudio && !window.currentPlayingAudio.paused) || (window.speechSynthesis && window.speechSynthesis.speaking);
+        if (!isSpeaking) {
+          clearInterval(checkInterval);
+          trackerState.prescriptionAudioPlaying = false;
+          renderCurrentView();
+        }
+      }, 500);
     }
 
     function renderTrackerView(container) {
@@ -7293,12 +7843,13 @@
       if (selectedPlant && !trackerState.selectedPlantId) {
         trackerState.selectedPlantId = selectedPlant.id;
       }
-
       const pastLogs = (selectedPlant && Array.isArray(selectedPlant.dailyLogs) && selectedPlant.dailyLogs.length > 0)
         ? selectedPlant.dailyLogs
         : JSON.parse(localStorage.getItem('farmsathi_daily_tracks') || '[]');
 
       const result = trackerState.lastResult;
+      const actionPlan = getTodayCoreAction(selectedPlant, trackerState.dayNumber || 30);
+      const tankMixResult = getTankMixCompatibility(tankMixState.chem1, tankMixState.chem2);
 
       container.innerHTML = `
         <div class="space-y-6 max-w-4xl mx-auto">
@@ -7533,58 +8084,232 @@
             </div>
           ` : ''}
 
-          <!-- BEFORE & AFTER DAILY PHOTO GROWTH COMPARISON SLIDER -->
-          <div class="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
-              <div class="flex items-center space-x-2.5">
-                <div class="w-8 h-8 rounded-xl bg-forest-100 text-forest-700 flex items-center justify-center shrink-0">
-                  <i data-lucide="split" class="w-4 h-4"></i>
+          <!-- TODAY'S ACTION & TANK-MIX PRESCRIPTION CARD -->
+          <div class="space-y-6">
+            <!-- 1. Today's Core Action Card -->
+            <div class="bg-gradient-to-br from-slate-950 via-emerald-950 to-slate-900 rounded-3xl p-6 sm:p-7 text-white shadow-xl border border-emerald-500/30 relative overflow-hidden">
+              <div class="absolute -right-20 -bottom-20 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+              <!-- Header with Audio Readout Button -->
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-5 border-b border-emerald-800/40 relative z-10">
+                <div class="flex items-center space-x-3">
+                  <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-emerald-500/20 shrink-0">
+                    <i data-lucide="clipboard-check" class="w-5 h-5"></i>
+                  </div>
+                  <div>
+                    <div class="flex items-center space-x-2">
+                      <span class="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/30">
+                        ${selectedPlant ? selectedPlant.name : 'Crop'} &bull; Day ${trackerState.dayNumber || 30}
+                      </span>
+                      <span class="text-[10px] font-bold text-slate-400">
+                        ${loc(actionPlan.stageNameTe, actionPlan.stageNameHi, actionPlan.stageName)}
+                      </span>
+                    </div>
+                    <h3 class="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5">
+                      ${loc("నేటి కార్యాచరణ ప్రిస్క్రిప్షన్", "आज का एक्शन प्लान व प्रिस्क्रिप्शन", "Today's Action & Tank-Mix Prescription")}
+                    </h3>
+                  </div>
                 </div>
+
+                <!-- 1-TAP AUDIO READOUT BUTTON (🔊) -->
+                <button onclick="togglePrescriptionAudio()" class="px-4 py-2.5 rounded-2xl font-black text-xs flex items-center justify-center space-x-2 transition-all shadow-md active:scale-95 shrink-0 ${
+                  trackerState.prescriptionAudioPlaying 
+                    ? 'bg-amber-400 text-slate-950 shadow-amber-400/40 ring-2 ring-amber-300 animate-pulse' 
+                    : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/30'
+                }" title="Listen to today's prescription plan">
+                  <i data-lucide="${trackerState.prescriptionAudioPlaying ? 'volume-x' : 'volume-2'}" class="w-4 h-4 ${trackerState.prescriptionAudioPlaying ? 'animate-bounce' : ''}"></i>
+                  <span>${trackerState.prescriptionAudioPlaying 
+                    ? loc("ఆపండి (వాయిస్)", "रोकें (ऑडियो)", "Stop Audio") 
+                    : loc("🔊 వాయిస్ వినండి (ఆడియో)", "🔊 बोलकर सुनें (ऑडियो)", "🔊 Listen Today's Plan")}</span>
+                </button>
+              </div>
+
+              <!-- 3 Core Action Blocks Grid -->
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-5 relative z-10">
+                <!-- Block 1: Next 24-Hour Task -->
+                <div class="bg-white/5 backdrop-blur-sm rounded-2xl p-4 border border-white/10 flex flex-col justify-between">
+                  <div>
+                    <div class="flex items-center space-x-2 text-emerald-400 text-[11px] font-black uppercase tracking-wider mb-2">
+                      <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                      <span>${loc("రాబోయే 24 గంటల పని", "अगले 24 घंटे का मुख्य कार्य", "Next 24-Hour Core Task")}</span>
+                    </div>
+                    <p class="text-xs sm:text-[13px] font-semibold text-emerald-50 leading-relaxed">
+                      ${loc(actionPlan.taskTe, actionPlan.taskHi, actionPlan.task)}
+                    </p>
+                  </div>
+                  <div class="mt-3 pt-2 border-t border-white/10 flex items-center justify-between text-[10px] text-slate-400 font-bold">
+                    <span>${loc("లక్ష్యం", "लक्ष्य", "Target")}: ${selectedPlant ? selectedPlant.type : 'Crop'}</span>
+                    <span class="text-emerald-300">&check; Agronomist Verified</span>
+                  </div>
+                </div>
+
+                <!-- Block 2: Ideal Spray Window Synced With Weather -->
+                <div class="bg-white/5 backdrop-blur-sm rounded-2xl p-4 border border-white/10 flex flex-col justify-between">
+                  <div>
+                    <div class="flex items-center space-x-2 text-teal-300 text-[11px] font-black uppercase tracking-wider mb-2">
+                      <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+                      <span>${loc("అనుకూల స్ప్రే సమయం (వాతావరణ సింక్)", "अनुकूल स्प्रे समय (मौसम सिंक)", "Ideal Spray Window (Weather Synced)")}</span>
+                    </div>
+                    <!-- Weather Condition Badge -->
+                    <div class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-[10px] font-black mb-2.5 ${
+                      actionPlan.weatherStatus === 'rain_warning' 
+                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' 
+                        : (actionPlan.weatherStatus === 'wind_warning' || actionPlan.weatherStatus === 'heat_warning'
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30')
+                    }">
+                      <span>${loc(actionPlan.weatherBadgeTe, actionPlan.weatherBadgeHi, actionPlan.weatherBadge)}</span>
+                    </div>
+                    <p class="text-xs sm:text-[13px] font-bold text-white leading-relaxed">
+                      ${loc(actionPlan.sprayWindowTe, actionPlan.sprayWindowHi, actionPlan.sprayWindow)}
+                    </p>
+                  </div>
+                  <div class="mt-3 pt-2 border-t border-white/10 flex items-center justify-between text-[10px] text-slate-400 font-bold">
+                    <span>🌬️ Wind: ${STATE.weather && STATE.weather.current ? STATE.weather.current.windSpeed : 8} km/h</span>
+                    <span>🌧️ Rain: ${STATE.weather && STATE.weather.daily ? STATE.weather.daily.rainProb : 10}%</span>
+                  </div>
+                </div>
+
+                <!-- Block 3: Estimated Cost Per Acre -->
+                <div class="bg-white/5 backdrop-blur-sm rounded-2xl p-4 border border-white/10 flex flex-col justify-between">
+                  <div>
+                    <div class="flex items-center space-x-2 text-amber-300 text-[11px] font-black uppercase tracking-wider mb-2">
+                      <i data-lucide="indian-rupee" class="w-3.5 h-3.5"></i>
+                      <span>${loc("ఎకరాకు అంచనా ఖర్చు", "प्रति एकड़ अनुमानित लागत", "Estimated Cost Per Acre")}</span>
+                    </div>
+                    <div class="text-xl sm:text-2xl font-black text-amber-400 tracking-tight mb-1">
+                      ${loc(actionPlan.costPerAcreTe, actionPlan.costPerAcreHi, actionPlan.costPerAcre)}
+                    </div>
+                    <p class="text-[11px] text-slate-300 font-medium leading-relaxed">
+                      ${loc(actionPlan.costBreakdownTe, actionPlan.costBreakdownHi, actionPlan.costBreakdown)}
+                    </p>
+                  </div>
+                  <div class="mt-3 pt-2 border-t border-white/10 text-[10px] text-emerald-400 font-bold flex items-center space-x-1">
+                    <i data-lucide="shield-check" class="w-3 h-3 shrink-0"></i>
+                    <span>${loc("సరియైన మోతాదుతో ₹600 వరకు ఆదా", "सही मात्रा से ₹600 तक बचत", "Saves up to ₹600/acre via tank accuracy")}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. Quick Tank-Mix Checker Card -->
+            <div class="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/90 shadow-sm space-y-5">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+                <div class="flex items-center space-x-3">
+                  <div class="w-10 h-10 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center font-black shrink-0 border border-teal-200">
+                    <i data-lucide="flask-conical" class="w-5 h-5"></i>
+                  </div>
+                  <div>
+                    <h4 class="text-base font-extrabold text-slate-900">
+                      ${loc("త్వరిత ట్యాంక్-మిక్స్ అనుకూలత చెకర్", "त्वरित एग्रोकेमिकल टैंक-मिक्स चेकर", "Quick Agrochemical Tank-Mix Compatibility Checker")}
+                    </h4>
+                    <p class="text-xs text-slate-500">
+                      ${loc("రెండు రసాయనాలు నాప్‌సాక్ ట్యాంక్‌లో కలపవచ్చో లేదో తనిఖీ చేయండి", "दो रसायनों को टैंक में एक साथ मिलाना सुरक्षित है या नहीं, तुरंत जांचें", "Verify chemical compatibility before mixing 2 pesticides, fungicides, or foliar feeds in your tank")}
+                    </p>
+                  </div>
+                </div>
+                <span class="self-start sm:self-auto px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200">
+                  🧪 KNAPSACK TANK ADVISOR
+                </span>
+              </div>
+
+              <!-- Chemical Selectors Row -->
+              <div class="grid grid-cols-1 md:grid-cols-11 gap-3 items-center">
+                <!-- Chemical 1 Select -->
+                <div class="md:col-span-5 space-y-1.5">
+                  <label class="text-[11px] font-black uppercase tracking-wider text-slate-600 flex items-center space-x-1">
+                    <span>1️⃣ ${loc("మొదటి రసాయనం", "पहला रसायन", "Chemical 1 (Fungicide / Insecticide)")}:</span>
+                  </label>
+                  <select onchange="setTankMixChem(1, this.value)" class="w-full p-3 bg-slate-50 hover:bg-slate-100/80 border border-slate-300 rounded-2xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:bg-white transition cursor-pointer">
+                    ${TANK_MIX_CHEMICALS.map(c => `
+                      <option value="${c.id}" ${tankMixState.chem1 === c.id ? 'selected' : ''}>
+                        ${c.name} (${c.group})
+                      </option>
+                    `).join('')}
+                  </select>
+                </div>
+
+                <!-- Plus Indicator -->
+                <div class="md:col-span-1 flex items-center justify-center pt-2 md:pt-5">
+                  <div class="w-8 h-8 rounded-full bg-slate-100 border border-slate-300 text-slate-600 flex items-center justify-center font-black text-sm shadow-2xs">
+                    +
+                  </div>
+                </div>
+
+                <!-- Chemical 2 Select -->
+                <div class="md:col-span-5 space-y-1.5">
+                  <label class="text-[11px] font-black uppercase tracking-wider text-slate-600 flex items-center space-x-1">
+                    <span>2️⃣ ${loc("రెండవ రసాయనం", "दूसरा रसायन", "Chemical 2 (Nutrient / Pesticide)")}:</span>
+                  </label>
+                  <select onchange="setTankMixChem(2, this.value)" class="w-full p-3 bg-slate-50 hover:bg-slate-100/80 border border-slate-300 rounded-2xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:bg-white transition cursor-pointer">
+                    ${TANK_MIX_CHEMICALS.map(c => `
+                      <option value="${c.id}" ${tankMixState.chem2 === c.id ? 'selected' : ''}>
+                        ${c.name} (${c.group})
+                      </option>
+                    `).join('')}
+                  </select>
+                </div>
+              </div>
+
+              <!-- Quick Presets for Farmers -->
+              <div class="flex flex-wrap items-center gap-1.5 pt-1">
+                <span class="text-[10px] font-black uppercase tracking-wider text-slate-400 mr-1">${loc("త్వరిత నమూనాలు", "त्वरित उदाहरण", "Popular Presets")}:</span>
+                <button onclick="tankMixState.chem1='imidacloprid'; tankMixState.chem2='mancozeb'; renderCurrentView();" class="text-[10px] font-bold px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 text-slate-700 border border-slate-200 transition">
+                  🟢 Imidacloprid + Mancozeb
+                </button>
+                <button onclick="tankMixState.chem1='npk_19_19_19'; tankMixState.chem2='neem_oil'; renderCurrentView();" class="text-[10px] font-bold px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 text-slate-700 border border-slate-200 transition">
+                  🟢 19:19:19 + Neem Oil
+                </button>
+                <button onclick="tankMixState.chem1='calcium_nitrate'; tankMixState.chem2='boron_20'; renderCurrentView();" class="text-[10px] font-bold px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 text-slate-700 border border-slate-200 transition">
+                  🟢 Calcium + Boron
+                </button>
+                <button onclick="tankMixState.chem1='copper_oxychloride'; tankMixState.chem2='chlorpyrifos'; renderCurrentView();" class="text-[10px] font-bold px-2.5 py-1 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 transition">
+                  🔴 Copper + Chlorpyrifos
+                </button>
+                <button onclick="tankMixState.chem1='calcium_nitrate'; tankMixState.chem2='npk_19_19_19'; renderCurrentView();" class="text-[10px] font-bold px-2.5 py-1 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 transition">
+                  🔴 Calcium Nitrate + 19:19:19
+                </button>
+              </div>
+
+              <!-- DYNAMIC COMPATIBILITY BADGE & DETAILS -->
+              <div class="rounded-2xl p-5 border ${tankMixResult.badgeClass} space-y-3 transition-all duration-200">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <span class="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider border shadow-2xs ${
+                    tankMixResult.status === 'danger' 
+                      ? 'bg-rose-600 text-white border-rose-700' 
+                      : (tankMixResult.status === 'caution' 
+                          ? 'bg-amber-500 text-slate-950 border-amber-600' 
+                          : (tankMixResult.status === 'info'
+                              ? 'bg-slate-700 text-white border-slate-800'
+                              : 'bg-emerald-700 text-white border-emerald-800'))
+                  }">
+                    ${tankMixResult.badge}
+                  </span>
+                  <span class="text-[11px] font-bold text-slate-600">
+                    🔬 Scientific Reaction & Tank Safety
+                  </span>
+                </div>
+
                 <div>
-                  <h4 class="text-sm font-extrabold text-slate-900">Before & After Daily Growth Comparison</h4>
-                  <p class="text-[11px] text-slate-500">Drag central divider to compare Day 1 seedling vs today's mature leaf canopy</p>
+                  <h5 class="text-sm font-extrabold text-slate-900 mb-1">
+                    ${tankMixResult.title}
+                  </h5>
+                  <p class="text-xs text-slate-700 leading-relaxed font-medium">
+                    ${tankMixResult.details}
+                  </p>
+                </div>
+
+                <!-- Precautions & W-A-L-E Method -->
+                <div class="p-3 bg-white/80 rounded-xl border border-slate-200/80 space-y-1">
+                  <div class="text-[11px] font-black uppercase tracking-wider text-slate-800 flex items-center space-x-1.5">
+                    <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-amber-600"></i>
+                    <span>${loc("నాప్‌సాక్ ట్యాంక్ జాగ్రత్తలు", "टैंक मिश्रण सावधानियां", "Knapsack Mixing Precautions & Method")}:</span>
+                  </div>
+                  <p class="text-xs text-slate-800 font-semibold leading-relaxed">
+                    ${tankMixResult.precautions}
+                  </p>
                 </div>
               </div>
-              <div class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-bold border border-emerald-200">
-                <span>🌱 +16 cm Height</span>
-                <span>&bull;</span>
-                <span>🌿 +14 New Leaves</span>
-                <span>&bull;</span>
-                <span>💚 +18% Chlorophyll</span>
-              </div>
-            </div>
-
-            <!-- Interactive Split View Slider Container -->
-            <div class="relative w-full h-72 sm:h-80 rounded-2xl overflow-hidden select-none border border-slate-200 shadow-inner bg-slate-900 group">
-              <!-- After Image (Background: Today's Mature Foliage) -->
-              <img id="growth-after-img" src="${(trackerState.imageData || (selectedPlant ? selectedPlant.image : '/assets/plants/watermelon_plant.jpg'))}" alt="Today's Mature Plant Growth" class="absolute inset-0 w-full h-full object-cover" />
-              <div class="absolute top-3 right-3 bg-black/75 backdrop-blur-xs text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-sm z-10">
-                Today (Day ${trackerState.dayNumber || 30}) &bull; Mature Foliage
-              </div>
-
-              <!-- Before Image (Clipped Overlay: Day 1 Seedling) -->
-              <div id="growth-before-container" class="absolute inset-0 overflow-hidden w-1/2 border-r-2 border-white shadow-2xl">
-                <img id="growth-before-img" src="${((pastLogs && pastLogs.length > 1 && pastLogs[pastLogs.length-1].image) ? pastLogs[pastLogs.length-1].image : 'https://images.unsplash.com/photo-1592841200221-a6898f307baa?auto=format&fit=crop&w=800&q=80')}" alt="Day 1 Seedling" class="absolute inset-0 w-full h-full object-cover" style="width: 200%; max-width: none;" />
-                <div class="absolute top-3 left-3 bg-emerald-950/80 backdrop-blur-xs text-emerald-200 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm">
-                  Day 1 &bull; Young Seedling
-                </div>
-              </div>
-
-              <!-- Center Divider Line & Handle -->
-              <div id="growth-slider-handle" class="absolute top-0 bottom-0 left-1/2 -ml-3 flex items-center justify-center pointer-events-none z-10">
-                <div class="w-7 h-7 rounded-full bg-white text-forest-800 shadow-xl border border-slate-200 flex items-center justify-center text-xs font-black">
-                  ↔
-                </div>
-              </div>
-
-              <!-- Range Input (interactive drag across slider) -->
-              <input type="range" min="1" max="99" value="50" oninput="updateGrowthSlider(this.value)" class="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20" aria-label="Compare Before and After Growth" />
-            </div>
-
-            <div class="flex items-center justify-between text-xs text-slate-500 pt-1">
-              <span class="font-bold text-forest-700">◂ Slide Left: Reveal Today's Growth</span>
-              <span class="text-[11px] text-slate-400">Drag handle across image to compare</span>
-              <span class="font-bold text-slate-700">Slide Right: Reveal Day 1 Seedling ▸</span>
             </div>
           </div>
 
@@ -8056,13 +8781,33 @@
     function playPestRadarAudio() {
       let text = '';
       if (STATE.lang === 'te') {
-        text = `రైతు సమాచారం: మీ పరిసరాల్లో 6 రకాల తెగుళ్ల హెచ్చరికలు క్రియాశీలకంగా ఉన్నాయి. 6 కిలోమీటర్ల దూరంలో మొక్కజొన్న ఆకు ఎండు తెగులు, 11 కిలోమీటర్ల దూరంలో మిరప తామర పురుగులు, 18 కిలోమీటర్ల దూరంలో వరి సుడిదోమ గమనించబడ్డాయి. వెంటనే రక్షణాత్మక వేపనూనె లేదా ట్రైకోడెర్మా పిచికారీ చేసి పంటలను కాపాడుకోండి.`;
+        text = `ప్రాంతీయ తెగుళ్ల రాడార్ సమగ్ర హెచ్చరిక: మీ పొలం చుట్టూ 30 కిలోమీటర్ల పరిధిలో 6 క్రియాశీలక తెగుళ్లు గమనించబడ్డాయి. ` +
+          `1. 6 కిలోమీటర్ల దూరంలో మొక్కజొన్న ఆకు ఎండు తెగులు, నివారణకు వెంటనే వేపనూనె లేదా మాంకోజెబ్ పిచికారీ చేయండి. ` +
+          `2. 11 కిలోమీటర్ల దూరంలో మిరప తామర పురుగులు మరియు బొబ్బర తెగులు, నివారణకు నీలం పసుపు జిగురు అట్టలు అమర్చి పుల్లటి మజ్జిగ స్ప్రే చేయండి. ` +
+          `3. 16 కిలోమీటర్ల దూరంలో టమోటా ఆకుమచ్చ తెగులు, నేలను తాకే కింది ఆకులను కత్తిరించి ట్రైకోడెర్మా పిచికారీ చేయండి. ` +
+          `4. 18 కిలోమీటర్ల దూరంలో వరి సుడిదోమ మరియు కాండం తొలిచే పురుగు, రెండు రోజుల పాటు పొలంలో నీరు తీసి ఆరబెట్టండి. ` +
+          `5. 22 కిలోమీటర్ల దూరంలో పుచ్చకాయ బూడిద తెగులు, తీగల కింద ఎండు గడ్డి వేసి మల్చింగ్ చేయండి. ` +
+          `6. 27 కిలోమీటర్ల దూరంలో ప్రత్తిలో గులాబీ రంగు కాయ తొలిచే పురుగు, లింగాకర్షక బుట్టలు అమర్చండి. ` +
+          `ముందస్తు రక్షణ చర్యలతో పంటలను కాపాడుకోండి.`;
       } else if (STATE.lang === 'hi') {
-        text = `किसान कीट रडार अलर्ट: आपके क्षेत्र में 6 प्रकार की बीमारियों का खतरा है। 6 किलोमीटर दूर मक्का में झुलसा, 11 किलोमीटर दूर मिर्च में थ्रिप्स और 18 किलोमीटर दूर धान में फुदका का प्रकोप है। तुरंत नीम का तेल या ट्राइकोडर्मा का छिड़काव करें।`;
+        text = `क्षेत्रीय कीट प्रकोप रडार अलर्ट: आपके 30 किलोमीटर क्षेत्र में 6 सक्रिय खतरे हैं। ` +
+          `1. 6 किमी दूर मक्का में झुलसा रोग, तुरंत नीम तेल या मैंकोजेब छिड़कें। ` +
+          `2. 11 किमी दूर मिर्च में थ्रिप्स व पत्ती मरोड़ रोग, स्टिकी ट्रैप लगाएं और खट्टी छाछ छिड़कें। ` +
+          `3. 16 किमी दूर टमाटर में अगेती झुलसा, निचली पत्तियां हटाएं व ट्राइकोडर्मा डालें। ` +
+          `4. 18 किमी दूर धान में भूरा फुदका व तना छेदक, 2 दिन खेत का पानी निकालें। ` +
+          `5. 22 किमी दूर तरबूज में फफूंद, बेलों के नीचे सूखी घास बिछाएं। ` +
+          `6. 27 किमी दूर कपास में गुलाबी सुंडी, फिरोमोन ट्रैप लगाएं। ` +
+          `समय रहते रोकथाम करके अपनी फसल सुरक्षित करें।`;
       } else {
-        text = `Regional Pest Outbreak Radar Alert: 6 active biological threats detected within 30 km. Northern Leaf Blight is active 6 km away, Chilli Thrips 11 km away, and Paddy Planthopper 18 km away. Spray preventive Neem Oil or Trichoderma before spore arrival.`;
+        text = `Regional Pest Outbreak Radar Alert: 6 active crop threats detected within 30 km radius. ` +
+          `1. Corn Northern Leaf Blight 6 km away; spray Neem Oil or Mancozeb. ` +
+          `2. Chilli Thrips and Leaf Curl 11 km away; deploy sticky traps and buttermilk spray. ` +
+          `3. Tomato Early Blight 16 km away; prune soil-touching leaves and apply Trichoderma. ` +
+          `4. Paddy Planthopper 18 km away; drain standing water for 2 days. ` +
+          `5. Watermelon Downy Mildew 22 km away; mulch soil with dry straw. ` +
+          `6. Cotton Pink Bollworm 27 km away; deploy pheromone traps immediately.`;
       }
-      speakText(text, STATE.lang);
+      speakText(text, STATE.lang, true);
       showToast("🔊 Playing Regional Pest Radar Audio Briefing");
     }
 
@@ -8070,7 +8815,7 @@
       const th = PEST_RADAR_THREATS.find(x => x.id === threatId);
       if (!th) return;
       const text = STATE.lang === 'te' ? th.audioTe : (STATE.lang === 'hi' ? th.audioHi : `${th.disease} is active ${th.distance}. Preventive action: ${th.preventiveAction}`);
-      speakText(text, STATE.lang);
+      speakText(text, STATE.lang, true);
       showToast(`🔊 Playing audio for ${th.cropName.split('(')[0]}`);
     }
 
@@ -8454,7 +9199,13 @@
 
     // 5. AI ASSISTANT (ASK FARMSATHI)
     let chatHistory = [
-      { sender: 'bot', text: 'Hello! I am FarmSathi AI, your agronomy & urban farming assistant. Ask me about yellowing leaves, spray tank dosage, balcony sunlight, or organic potting mixes.' }
+      {
+        sender: 'bot',
+        text: 'నమస్కారం! నేను ఫార్మ్‌సాథి AI సహాయకుడిని. ఆకులు పసుపుగా మారడం, స్ప్రే ట్యాంక్ మోతాదు లేదా ఎరువుల గురించి నన్ను అడగండి.',
+        textTe: 'నమస్కారం! నేను ఫార్మ్‌సాథి AI సహాయకుడిని. ఆకులు పసుపుగా మారడం, స్ప్రే ట్యాంక్ మోతాదు లేదా ఎరువుల గురించి నన్ను అడగండి.',
+        textHi: 'नमस्ते! मैं फार्मसाथी AI सहायक हूँ। पीली पत्तियों, स्प्रे टैंक की खुराक या जैविक खाद के बारे में मुझसे पूछें।',
+        textEn: 'Hello! I am FarmSathi AI, your agronomy & farming assistant. Ask me about yellowing leaves, spray tank dosage, or organic fertilizers.'
+      }
     ];
 
     function renderAssistantView(container) {
@@ -8477,47 +9228,53 @@
                 <p class="text-xs text-slate-500 font-medium">Context: ${STATE.plants.length} plants in ${STATE.location.name}</p>
               </div>
             </div>
-            <button onclick="clearChat()" class="text-xs font-bold text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-xl hover:bg-slate-100 transition">Clear Chat</button>
+            <button onclick="clearChat()" class="text-xs font-bold text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-xl hover:bg-slate-100 transition">${loc('చాట్ క్లియర్ చేయండి', 'चैट रीसेट करें', 'Clear Chat')}</button>
           </div>
 
           <!-- Suggested Starter Chips -->
           <div class="flex items-center gap-2 overflow-x-auto pb-1 hide-scrollbar shrink-0">
-            <button onclick="sendQuickPrompt('My tomato leaves are yellow.')" class="px-3.5 py-2 bg-white hover:bg-emerald-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl whitespace-nowrap shadow-2xs transition flex items-center space-x-1.5">
+            <button onclick="sendQuickPrompt(loc('టమోటా ఆకులు పసుపుగా మారాయి.', 'टमाटर की पत्तियां पीली पड़ गई हैं।', 'My tomato leaves are yellow.'))" class="px-3.5 py-2 bg-white hover:bg-emerald-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl whitespace-nowrap shadow-2xs transition flex items-center space-x-1.5">
               <span>🍅</span>
-              <span>Tomato leaves yellow</span>
+              <span>${loc('టమోటా ఆకులు పసుపు', 'टमाटर पत्ती पीली', 'Tomato leaves yellow')}</span>
             </button>
-            <button onclick="sendQuickPrompt('My rice / chilli is 35 days old.')" class="px-3.5 py-2 bg-white hover:bg-emerald-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl whitespace-nowrap shadow-2xs transition flex items-center space-x-1.5">
+            <button onclick="sendQuickPrompt(loc('మిరప పంట 35 రోజుల వయసు.', 'मिर्च की फसल 35 दिन की है।', 'My chilli is 35 days old.'))" class="px-3.5 py-2 bg-white hover:bg-emerald-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl whitespace-nowrap shadow-2xs transition flex items-center space-x-1.5">
               <span>🌶️</span>
-              <span>Chilli 35 days old</span>
+              <span>${loc('మిరప 35 రోజుల పైరు', 'मिर्च 35 दिन की', 'Chilli 35 days old')}</span>
             </button>
-            <button onclick="sendQuickPrompt('Which plant is best for summer?')" class="px-3.5 py-2 bg-white hover:bg-emerald-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl whitespace-nowrap shadow-2xs transition flex items-center space-x-1.5">
+            <button onclick="sendQuickPrompt(loc('వేసవికి ఏ పంట అనుకూలం?', 'गर्मी के लिए कौन सी फसल अच्छी है?', 'Which plant is best for summer?'))" class="px-3.5 py-2 bg-white hover:bg-emerald-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl whitespace-nowrap shadow-2xs transition flex items-center space-x-1.5">
               <span>☀️</span>
-              <span>Best plants for summer</span>
+              <span>${loc('వేసవి అనుకూల పంటలు', 'गर्मी की फसलें', 'Best plants for summer')}</span>
             </button>
-            <button onclick="sendQuickPrompt('Rain is expected tomorrow, should I water?')" class="px-3.5 py-2 bg-white hover:bg-emerald-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl whitespace-nowrap shadow-2xs transition flex items-center space-x-1.5">
+            <button onclick="sendQuickPrompt(loc('రేపు వర్షం పడితే నీరు పెట్టవచ్చా?', 'कल बारिश हो तो क्या पानी देना चाहिए?', 'Rain is expected tomorrow, should I water?'))" class="px-3.5 py-2 bg-white hover:bg-emerald-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl whitespace-nowrap shadow-2xs transition flex items-center space-x-1.5">
               <span>🌧️</span>
-              <span>Rain watering advice</span>
+              <span>${loc('వర్షం నీటిపారుదల సలహా', 'बारिश सिंचाई सलाह', 'Rain watering advice')}</span>
             </button>
           </div>
 
           <!-- Message History Container -->
           <div id="chat-messages" class="flex-1 overflow-y-auto space-y-4 p-5 glass-card rounded-3xl border border-slate-200/80 shadow-inner">
-            ${chatHistory.map(msg => `
+            ${chatHistory.map((msg, index) => {
+              const currentLang = STATE.lang || 'te';
+              const displayText = msg.sender === 'bot'
+                ? ((currentLang === 'te' ? msg.textTe : (currentLang === 'hi' ? msg.textHi : msg.textEn)) || msg.text)
+                : msg.text;
+              return `
               <div class="flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}">
                 <div class="max-w-[85%] rounded-2xl p-4 text-xs leading-relaxed ${msg.sender === 'user' ? 'bg-gradient-to-r from-emerald-700 to-teal-700 text-white rounded-br-xs shadow-md font-medium' : 'bg-white text-slate-800 rounded-bl-xs border border-slate-200/80 shadow-xs font-normal'}">
-                  <div class="leading-relaxed">${msg.text}</div>
+                  <div class="leading-relaxed whitespace-pre-line">${displayText}</div>
                   ${msg.sender === 'bot' ? `
-                    <div class="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <button onclick="speakText('${encodeURIComponent(msg.text)}')" class="inline-flex items-center space-x-1.5 text-[10px] font-black text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 transition" title="Listen to response">
+                    <div class="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <button onclick="speakChatMessage(${index})" class="inline-flex items-center space-x-1.5 text-[10px] font-black text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 transition" title="Listen to response in pure ${currentLang === 'te' ? 'Telugu' : currentLang === 'hi' ? 'Hindi' : 'English'}">
                         <i data-lucide="volume-2" class="w-3.5 h-3.5 text-emerald-600"></i>
                         <span>${loc('🔊 వినండి', '🔊 सुनें', '🔊 Listen')}</span>
                       </button>
-                      <span class="text-[9px] text-slate-400 font-semibold">${loc('రైతులకు ఆడియో సహాయం', 'किसानों के लिए ऑडियो', 'Voice AI for farmers')}</span>
+                      <span class="text-[9px] text-slate-400 font-semibold">${loc('స్పష్టమైన తెలుగు ఆడియో', 'शुद्ध हिंदी ऑडियो', 'Clear Voice AI')}</span>
                     </div>
                   ` : ''}
                 </div>
               </div>
-            `).join('')}
+            `;
+            }).join('')}
           </div>
 
           <!-- Input Bar with Voice Mic -->
@@ -8539,6 +9296,15 @@
       scrollChatToBottom();
     }
 
+    function speakChatMessage(index) {
+      const msg = chatHistory[index];
+      if (!msg) return;
+      const lang = STATE.lang || 'te';
+      const textToSpeak = (lang === 'te' ? (msg.textTe || msg.text) : (lang === 'hi' ? (msg.textHi || msg.text) : (msg.textEn || msg.text)));
+      speakText(textToSpeak, lang, true);
+      showToast(loc("🔊 సమాధానం చదువుతున్నాము...", "🔊 उत्तर सुनाया जा रहा है...", "🔊 Reading response aloud..."));
+    }
+
     function scrollChatToBottom() {
       const el = document.getElementById('chat-messages');
       if (el) el.scrollTop = el.scrollHeight;
@@ -8546,7 +9312,13 @@
 
     function clearChat() {
       chatHistory = [
-        { sender: 'bot', text: 'Chat refreshed. What plant problem can I assist you with today?' }
+        {
+          sender: 'bot',
+          text: loc('చాట్ రిఫ్రెష్ చేయబడింది. ఈ రోజు నేను మీకు ఎలా సహాయపడగలను?', 'चैट रीसेट हो गई। आज मैं आपकी क्या सहायता कर सकता हूँ?', 'Chat refreshed. What plant problem can I assist you with today?'),
+          textTe: 'చాట్ రిఫ్రెష్ చేయబడింది. ఈ రోజు నేను మీకు ఎలా సహాయపడగలను?',
+          textHi: 'चैट रीसेट हो गई। आज मैं आपकी क्या सहायता कर सकता हूँ?',
+          textEn: 'Chat refreshed. What plant problem can I assist you with today?'
+        }
       ];
       renderAssistantView(document.getElementById('view-container'));
     }
@@ -8672,7 +9444,7 @@
       }
     }
 
-    function handleSendChat(e) {
+    async function handleSendChat(e) {
       if (e) e.preventDefault();
       const input = document.getElementById('chat-input');
       if (!input) return;
@@ -8684,48 +9456,124 @@
       input.value = '';
       renderAssistantView(document.getElementById('view-container'));
 
-      // Generate intelligent contextual response
-      setTimeout(() => {
-        const lower = q.toLowerCase();
-        let response = "";
+      const lower = q.toLowerCase();
+      const isAddFlower = lower.startsWith('add') || lower.includes('add flower') || lower.includes('add any flower') || 
+                          lower.includes('add rose') || lower.includes('add plant') || lower.includes('add jasmine') || 
+                          lower.includes('add marigold') || lower.includes('add hibiscus') || lower.includes('gulab add') || 
+                          lower.includes('phool add') || lower.includes('puvvu add') || lower.includes('mokka add') ||
+                          lower === 'rose' || lower === 'flower' || lower === 'gulab';
 
-        const isAddFlower = lower.startsWith('add') || lower.includes('add flower') || lower.includes('add any flower') || 
-                            lower.includes('add rose') || lower.includes('add plant') || lower.includes('add jasmine') || 
-                            lower.includes('add marigold') || lower.includes('add hibiscus') || lower.includes('gulab add') || 
-                            lower.includes('phool add') || lower.includes('puvvu add') || lower.includes('mokka add') ||
-                            lower === 'rose' || lower === 'flower' || lower === 'gulab';
+      let resData = null;
 
-        if (isAddFlower) {
-          const added = addNewPlantFromVoice(q);
-          response = `🌹 Done! I have added "${added.name}" to your plants with an authentic high-resolution botanical photo. You can monitor its watering schedule, growth metrics, and care logs in the My Plants tab!`;
-        } else if (lower.includes('yellow') && (lower.includes('tomato') || lower.includes('leaf') || lower.includes('leaves'))) {
-          response = "I understand — yellow tomato leaves can have several causes. Check whether older or newer leaves are yellow and check soil moisture. If you see spots, upload or snap a photo in AI Plant Doctor. Natural lower leaf yellowing often occurs as the plant focuses energy on fruit; ensure topsoil is not waterlogged.";
-        } else if (lower.includes('corn') || lower.includes('maize')) {
-          response = "For Corn / Maize: Watch out for elongated grayish cigar-shaped lesions (Northern Corn Leaf Blight). Spray Neem Oil (5ml/L) or Mancozeb 75% WP (2.5g/L), water strictly at the stalk base, and provide balanced NPK.";
-        } else if (lower.includes('wheat')) {
-          response = "For Wheat: If you notice orange-brown powdery pustules, it is Wheat Leaf Rust. Apply Propiconazole 25% EC @ 1ml/L immediately on the flag leaf and avoid late-evening sprinkler irrigation.";
-        } else if (lower.includes('rice') || (lower.includes('chilli') && lower.includes('35'))) {
-          response = "Got it — around 35 days old, your plant is in active vegetative and early flower bud initiation. What are you noticing: yellowing, spots, curling, wilting, insects or slow growth? At this stage, ensure 6+ hours of direct sunlight and top-dress with two tablespoons of organic vermicompost.";
-        } else if (lower.includes('best') && (lower.includes('summer') || lower.includes('plant'))) {
-          response = "For summer heat, heat-tolerant choices like Okra (Bhindi), Green Chilli, Brinjal, and Mint thrive, provided containers are mulched to conserve moisture.";
-        } else if (lower.includes('rain') || lower.includes('water')) {
-          const rainProb = STATE.weather ? STATE.weather.daily.rainProb : 10;
-          response = `Based on your local forecast, rain probability is currently ${rainProb}%. If significant rain is expected, postpone watering outdoor terrace pots to prevent root rot and nutrient leaching. Always check topsoil depth first.`;
-        } else if (lower.includes('soil') || lower.includes('potting mix') || lower.includes('compost')) {
-          response = "For urban container farming, the ideal light-weight mix is: 40% Cocopeat (for moisture retention), 40% Vermicompost or aged cow manure (for balanced nutrition), and 20% Perlite or clean river sand (for aeration & root drainage). Add 1 tablespoon neem cake to prevent soil-borne pests.";
-        } else {
-          response = `Regarding "${q}": For plants in ${STATE.location.name.split(',')[0]}, check root drainage, observe morning sun exposure, and avoid over-fertilizing. If you notice discoloration or spots, snap a photo in our AI Plant Doctor for a visual screening!`;
+      if (isAddFlower) {
+        const added = addNewPlantFromVoice(q);
+        resData = {
+          textEn: `🌹 Done! I have added "${added.name}" to your plants with an authentic high-resolution botanical photo. You can monitor its watering schedule, growth metrics, and care logs in the My Plants tab!`,
+          textTe: `🌹 పూర్తయింది! నేను మీ గార్డెన్‌కు "${added.name}" మొక్కను చేర్చాను. మీరు 'నా మొక్కలు' ట్యాబ్‌లో దీని నీటిపారుదల మరియు సంరక్షణ వివరాలను చూడవచ్చు!`,
+          textHi: `🌹 हो गया! मैंने आपके पौधों में "${added.name}" को जोड़ दिया है। आप 'माई प्लांट्स' टैब में इसकी सिंचाई व देखभाल की जांच कर सकते हैं!`
+        };
+      } else if (!window.IS_SIMULATED_OFFLINE && navigator.onLine) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 12000);
+          const apiRes = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: q,
+              lang: STATE.lang || 'te',
+              location: STATE.location ? STATE.location.name : 'Hyderabad'
+            }),
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (apiRes.ok) {
+            const data = await apiRes.json();
+            if (data && (data.textTe || data.textEn)) {
+              resData = data;
+            }
+          }
+        } catch (err) {
+          console.warn('Chat API fetch error, activating local multi-lingual engine:', err);
         }
+      }
 
-        chatHistory.push({ sender: 'bot', text: response });
-        renderAssistantView(document.getElementById('view-container'));
+      if (!resData) {
+        resData = getLocalMultiLingualChatResponse(q);
+      }
 
-        // Speak aloud if user asked using voice
-        if (wasVoice) {
-          speakText(response);
-          lastChatUsedVoice = false;
-        }
-      }, 700);
+      const activeLang = STATE.lang || 'te';
+      const currentText = (activeLang === 'te') ? (resData.textTe || resData.textEn) : ((activeLang === 'hi') ? (resData.textHi || resData.textEn) : (resData.textEn || resData.textTe));
+
+      chatHistory.push({
+        sender: 'bot',
+        text: currentText,
+        textEn: resData.textEn || currentText,
+        textTe: resData.textTe || currentText,
+        textHi: resData.textHi || currentText
+      });
+
+      renderAssistantView(document.getElementById('view-container'));
+
+      if (wasVoice) {
+        speakText(currentText, activeLang, true);
+        lastChatUsedVoice = false;
+      }
+    }
+
+    function getLocalMultiLingualChatResponse(q) {
+      const lower = q.toLowerCase();
+
+      if (lower.includes('yellow') && (lower.includes('tomato') || lower.includes('leaf') || lower.includes('leaves') || lower.includes('ఆకు') || lower.includes('పీలీ'))) {
+        return {
+          textEn: "Yellowing leaves in tomatoes are often caused by overwatering, poor drainage, or early nitrogen deficiency. Check for dark concentric bullseye rings (Early Blight). Spray Mancozeb 75% WP (2.5 g/L) or Neem Oil (5 ml/L). Water strictly at the root base.",
+          textTe: "టమోటా ఆకులు పసుపుగా మారడానికి నేలలో అధిక తేమ, నీరు నిల్వ ఉండటం లేదా నత్రజని లోపం కారణం. ఆకులపై నల్లటి వలయాకార మచ్చలు ఉంటే ఎర్లీ బ్లైట్ తెగులు సోకినట్లు. దీని నివారణకు మాంకోజెబ్ (2.5 గ్రా/లీ) లేదా వేపనూనె (5 మి.లీ/లీ) పిచికారీ చేయండి. మొదళ్ల వద్ద నీరు నిల్వ ఉండకుండా చూడండి.",
+          textHi: "टमाटर की पत्तियां पीली पड़ने का मुख्य कारण जलभराव, खराब जल निकासी या नाइट्रोजन की कमी हो सकता है। यदि पत्तियों पर गोल कत्थई धब्बे हैं तो अगेती झुलसा का लक्षण है। रोकथाम के लिए मैंकोजेब (2.5 ग्राम/लीटर) या नीम तेल (5 मिली/लीटर) का छिड़काव करें।"
+        };
+      } else if (lower.includes('chilli') || lower.includes('మిరప') || lower.includes('मिर्च') || lower.includes('thrips') || lower.includes('curl') || lower.includes('35')) {
+        return {
+          textEn: "For Chilli leaf curl and thrips around 35 days: Install blue and yellow sticky traps (15 per acre). Spray Neem Oil 10,000 ppm (2.5 ml/L) or Imidacloprid 17.8% SL (0.5 ml/L). Top dress with 2 tablespoons vermicompost and spray during calm evening hours.",
+          textTe: "మిరప తామర పురుగులు మరియు బొబ్బర తెగులు (ఆకుముడుత) నివారణకు: ఎకరాకు 15 నీలం మరియు పసుపు జిగురు అట్టలు అమర్చండి. వేపనూనె 10,000 ppm (2.5 మి.లీ/లీ) లేదా ఇమిడాక్లోప్రిడ్ (0.5 మి.లీ/లీ) పిచికారీ చేయండి. సాయంత్రం వేళల్లో స్ప్రే చేయండి.",
+          textHi: "मिर्च में पत्ती मरोड़ और थ्रिप्स कीट नियंत्रण के लिए: प्रति एकड़ 15 नीले व पीले चिपचिपे ट्रैप लगाएं। नीम तेल 10,000 ppm (2.5 मिली/लीटर) या इमिडाक्लोप्रिड (0.5 मिली/लीटर) का छिड़काव शाम को करें।"
+        };
+      } else if (lower.includes('corn') || lower.includes('maize') || lower.includes('మొక్కజొన్న') || lower.includes('मक्का')) {
+        return {
+          textEn: "For Corn / Maize: Watch out for elongated grayish cigar-shaped lesions (Northern Corn Leaf Blight). Spray Neem Oil (5ml/L) or Mancozeb 75% WP (2.5g/L), water strictly at the stalk base, and provide balanced NPK.",
+          textTe: "మొక్కజొన్న ఆకు ఎండు తెగులు నివారణకు: పొడవాటి చుట్ట ఆకారపు మచ్చలను గమనించండి. వెంటనే మాంకోజెబ్ (2.5 గ్రా/లీ) లేదా వేపనూనె పిచికారీ చేయండి. మొక్కల మధ్య గాలి, వెలుతురు ధారాళంగా ప్రసరించేలా చూడండి.",
+          textHi: "मक्का में पत्ती झुलसा रोग नियंत्रण के लिए: लंबे भूरे धब्बे दिखते ही मैंकोजेब (2.5 ग्राम/लीटर) या नीम तेल का छिड़काव करें। पौधों के बीच उचित दूरी रखें।"
+        };
+      } else if (lower.includes('wheat') || lower.includes('గోధుమ') || lower.includes('गेहूं') || lower.includes('rust')) {
+        return {
+          textEn: "For Wheat: If you notice orange-brown powdery pustules, it is Wheat Leaf Rust. Apply Propiconazole 25% EC @ 1ml/L immediately on the flag leaf and avoid late-evening sprinkler irrigation.",
+          textTe: "గోధుమలో ఆకు కుంకుమ తెగులు నివారణకు: ఆకులపై నారింజ-గోధుమ రంగు పొడి మచ్చలు కనిపిస్తే వెంటనే ప్రొపికొనజోల్ (1 మి.లీ/లీ) పిచికారీ చేయండి. సాయంత్రం వేళల్లో నీటి తడులు ఇవ్వవద్దు.",
+          textHi: "गेहूं में भूरा रतुआ (गेरुआ) रोग नियंत्रण के लिए: पत्तियों पर नारंगी-भूरे चूर्ण जैसे धब्बे दिखते ही प्रोपिकोनाजोल 25% EC (1 मिली/लीटर) का तुरंत छिड़काव करें।"
+        };
+      } else if (lower.includes('best') && (lower.includes('summer') || lower.includes('plant') || lower.includes('వేసవి') || lower.includes('गर्मी'))) {
+        return {
+          textEn: "For summer heat, heat-tolerant choices like Okra (Bhindi), Green Chilli, Brinjal, and Mint thrive, provided containers are mulched with dry leaves to conserve soil moisture.",
+          textTe: "వేసవి తీవ్రతను తట్టుకునే పంటలు: బెండ, పచ్చిమిర్చి, వంకాయ మరియు పుదీనా బాగా పెరుగుతాయి. తేమ ఆవిరి కాకుండా నేలపై ఎండుటాకులతో మల్చింగ్ చేయండి.",
+          textHi: "गर्मी के मौसम के लिए सर्वोत्तम फसलें: भिंडी, हरी मिर्च, बैंगन और पुदीना तेज धूप में भी अच्छी उपज देते हैं। मिट्टी में नमी बनाए रखने के लिए सूखी पत्तियों से मल्चिंग करें।"
+        };
+      } else if (lower.includes('rain') || lower.includes('water') || lower.includes('వర్షం') || lower.includes('बारिश') || lower.includes('నీరు')) {
+        const rainProb = STATE.weather ? STATE.weather.daily.rainProb : 15;
+        return {
+          textEn: `Based on your local forecast, rain probability is currently ${rainProb}%. If significant rain is expected, postpone chemical spraying and surface irrigation to prevent runoff and root rot.`,
+          textTe: `మీ ప్రాంతంలో వర్షం పడే అవకాశం ప్రస్తుతం ${rainProb}% ఉంది. వర్షం వచ్చే అవకాశం ఉన్నందున ఎలాంటి మందుల పిచికారీలు మరియు అధిక నీటిపారుదల చేయవద్దు. మురుగు కాలువలు శుభ్రం చేయండి.`,
+          textHi: `आपके क्षेत्र में आज बारिश की संभावना लगभग ${rainProb}% है। यदि बारिश की संभावना अधिक है तो रासायनिक कीटनाशक छिड़काव स्थगित रखें ताकि दवा पानी में बह न जाए।`
+        };
+      } else if (lower.includes('soil') || lower.includes('potting mix') || lower.includes('compost') || lower.includes('మట్టి') || lower.includes('మిశ్రమం')) {
+        return {
+          textEn: "For healthy crops and urban container farming: Mix 40% Cocopeat (moisture), 40% Vermicompost or aged manure (nutrients), and 20% sand/perlite (drainage). Add 1 tablespoon neem cake per pot against soil pests.",
+          textTe: "ఆరోగ్యకరమైన పంటల కోసం ఉత్తమ కుండీల మట్టి మిశ్రమం: 40% కొబ్బరి పొట్టు (తేమ కోసం), 40% వర్మీకంపోస్ట్ లేదా పశువుల ఎరువు (పోషకాల కోసం), 20% ఇసుక (నీరు పోవడానికి). వేరు పురుగులు రాకుండా చెంచాడు వేపపిండి కలపండి.",
+          textHi: "स्वस्थ पौधों के लिए आदर्श पॉटिंग मिक्स: 40% कोकोपीट (नमी के लिए), 40% केंचुआ खाद या गोबर खाद (पोषण के लिए), और 20% रेत (जल निकासी के लिए)। मिट्टी के कीटों से बचाव के लिए 1 चम्मच नीम खली मिलाएं।"
+        };
+      } else {
+        return {
+          textEn: `Regarding "${q}": For crops in ${STATE.location.name.split(',')[0]}, check root drainage, observe morning sun exposure, and avoid over-fertilizing. If you notice spots or curl, snap a photo in AI Plant Doctor!`,
+          textTe: `మీ ప్రశ్న "${q}" పై సలహా: ${STATE.location.name.split(',')[0]} ప్రాంతంలో మొక్కల మొదళ్ల వద్ద నీరు నిల్వ ఉండకుండా చూడండి, ఉదయపు ఎండ తగిలేలా జాగ్రత్త తీసుకోండి. ఆకులపై మచ్చలు ఉంటే AI ప్లాంట్ డాక్టర్‌లో ఫోటో తీసి నిర్ధారించుకోండి!`,
+          textHi: `आपके सवाल "${q}" पर सलाह: ${STATE.location.name.split(',')[0]} में फसलों की जड़ों में पानी न जमने दें, सुबह की धूप सुनिश्चित करें। यदि पत्तियों पर धब्बे हैं तो AI प्लांट डॉक्टर में फोटो खींचकर सटीक समाधान पाएं!`
+        };
+      }
     }
 
     // 6. GOVERNMENT SCHEMES & SUBSIDIES
